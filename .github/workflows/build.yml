@@ -18,9 +18,10 @@ jobs:
       - name: Install ldid
         run: brew install ldid
 
-      - name: Build
+      - name: Clean and build
         run: |
           export THEOS=$HOME/theos
+          make clean
           make package
 
       - uses: actions/upload-artifact@v4
