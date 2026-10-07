@@ -20,7 +20,14 @@ static uintptr_t unityBase = 0;
 static bool g_fogDisabled = false;
 static bool g_mapHackEnabled = false;
 static bool g_hooksInstalled = false;
-static void installHooks(void); // forward decl
+
+/* ESP externs */
+extern bool g_espEnabled;
+extern void showESPOverlay(void);
+extern void hideESPOverlay(void);
+extern void updateESPMatrices(void);
+extern void updateESPEntities(void);
+
 
 /* ═══════════════════════════════════════════ */
 /*  HOOK: generic fog visibility bypass     */
@@ -468,6 +475,28 @@ static void showHUD(void) {
         [fogBox addSubview:btnReset];
 
         y += 100;
+
+        UIButton *btnESP = mkBtn(@"透视",
+            [UIColor colorWithRed:0.55 green:0.22 blue:0.72 alpha:1.0],
+            [UIColor whiteColor], 13);
+        btnESP.frame = CGRectMake(pad, y, cw, 34);
+        btnESP.layer.cornerRadius = 10;
+        [btnESP addAction:[UIAction actionWithHandler:^(UIAction *act) {
+            g_espEnabled = !g_espEnabled;
+            if (g_espEnabled) {
+                showESPOverlay();
+                updateESPMatrices();
+                [act.sender setTitle:@"关闭" forState:UIControlStateNormal];
+                ((UIButton *)act.sender).backgroundColor = [UIColor colorWithRed:0.88 green:0.38 blue:0.33 alpha:1.0];
+            } else {
+                hideESPOverlay();
+                [act.sender setTitle:@"透视" forState:UIControlStateNormal];
+                ((UIButton *)act.sender).backgroundColor = [UIColor colorWithRed:0.55 green:0.22 blue:0.72 alpha:1.0];
+            }
+            g_output.text = readAll();
+        }] forControlEvents:UIControlEventTouchUpInside];
+        [g_panel.contentView addSubview:btnESP];
+        y += 44;
 
         /* ── CAMERA SECTION ── */
         UILabel *camSec = mkSec(@"镜头控制");
