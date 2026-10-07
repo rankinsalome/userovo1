@@ -17,6 +17,7 @@ static float hook_GetRate(void) {
             const char *n = _dyld_get_image_name(i);
             if (n && strstr(n, "UnityFramework")) {
                 unityBase = (uintptr_t)_dyld_get_image_header(i);
+                NSLog(@"[GameHack] unityBase=0x%lx", unityBase);
                 break;
             }
         }
