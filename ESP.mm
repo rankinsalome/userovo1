@@ -12,6 +12,7 @@ UIWindow *g_espWin = nil;
 
 extern uintptr_t unityBase;
 extern bool g_mapHackEnabled;
+extern bool g_mapHackInstalled;
 
 Vec3 W2S(Vec3 w, M4x4 v, M4x4 p, float sw, float sh) {
     float *vm=v.m,*pm=p.m;
