@@ -10,7 +10,6 @@ M4x4 g_viewMat, g_projMat;
 bool g_matValid = false;
 UIWindow *g_espWin = nil;
 bool g_mapHackEnabled = false;
-bool g_mapHackInstalled = false;
 
 extern uintptr_t unityBase;
 
