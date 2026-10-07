@@ -618,24 +618,6 @@ static void* resolveIl2CppMethod(const char* ns, const char* klassName, const ch
     return method->methodPointer;
 }
 
-
-    // Try 3: FogOfWarSettings.Apply (private static, 5 params)
-    if (!target) {
-        target = resolveIl2CppMethod("", "FogOfWarSettings", "Apply", 5);
-        if (target) found = "FogOfWarSettings.Apply";
-    }
-
-    if (!target) {
-        NSLog(@"[GameHack] No fog method resolved. Map hack unavailable.");
-        return;
-    }
-
-    MSHookFunction(target, (void*)hook_get_bVisible, NULL);
-    g_mapHackInstalled = true;
-    NSLog(@"[GameHack] Hooked %s @ 0x%lx", found, (uintptr_t)target);
-}
-
-
 %ctor {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 6 * NSEC_PER_SEC),
                    dispatch_get_main_queue(), ^{
