@@ -542,6 +542,7 @@ static void showHUD(void) {
             dispatch_get_main_queue(), ^{
                 g_output.text = readAll();
             });
+        g_hud.hidden = NO;
     });
 }
 
