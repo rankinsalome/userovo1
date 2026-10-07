@@ -9,9 +9,9 @@ bool g_espEnabled = false;
 M4x4 g_viewMat, g_projMat;
 bool g_matValid = false;
 UIWindow *g_espWin = nil;
-bool g_mapHackEnabled = false;
 
 extern uintptr_t unityBase;
+extern bool g_mapHackEnabled;
 
 Vec3 W2S(Vec3 w, M4x4 v, M4x4 p, float sw, float sh) {
     float *vm=v.m,*pm=p.m;

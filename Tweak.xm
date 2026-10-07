@@ -18,7 +18,7 @@ uintptr_t unityBase = 0;
 
 /* ── State ── */
 static bool g_fogDisabled = false;
-static bool g_mapHackEnabled = false;
+bool g_mapHackEnabled = false;
 bool g_mapHackInstalled = false;
 
 /* ESP externs */
