@@ -1,0 +1,20 @@
+[1;31m> [1;3;39mMaking all for tweak gamehack…[m
+bash: line 1: /home/codespace/theos/toolchain/linux/iphone/bin/clang: No such file or directory
+bash: line 1: /home/codespace/theos/toolchain/linux/iphone/bin/clang: No such file or directory
+bash: line 1: /home/codespace/theos/toolchain/linux/iphone/bin/clang: No such file or directory
+bash: line 1: /home/codespace/theos/toolchain/linux/iphone/bin/clang: No such file or directory
+[0;31m==> [1;39mPreprocessing Tweak.xm…[m
+[0;32m==> [1;39mCompiling Tweak.xm (arm64e)…[m
+bash: line 1: /home/codespace/theos/toolchain/linux/iphone/bin/clang++: No such file or directory
+make[3]: *** [/home/codespace/theos/makefiles/instance/rules.mk:417: /workspaces/userovo1/.theos/obj/debug/arm64e/Tweak.xm.91a044c8.o] Error 127
+rm /workspaces/userovo1/.theos/obj/debug/arm64e/Tweak.xm.mm
+make[2]: *** [/home/codespace/theos/makefiles/instance/library.mk:52: /workspaces/userovo1/.theos/obj/debug/arm64e/gamehack.dylib] Error 2
+make[2]: *** Waiting for unfinished jobs....
+[0;31m==> [1;39mPreprocessing Tweak.xm…[m
+[0;32m==> [1;39mCompiling Tweak.xm (arm64)…[m
+bash: line 1: /home/codespace/theos/toolchain/linux/iphone/bin/clang++: No such file or directory
+make[3]: *** [/home/codespace/theos/makefiles/instance/rules.mk:417: /workspaces/userovo1/.theos/obj/debug/arm64/Tweak.xm.d6e4b627.o] Error 127
+rm /workspaces/userovo1/.theos/obj/debug/arm64/Tweak.xm.mm
+make[2]: *** [/home/codespace/theos/makefiles/instance/library.mk:52: /workspaces/userovo1/.theos/obj/debug/arm64/gamehack.dylib] Error 2
+make[1]: *** [/home/codespace/theos/makefiles/instance/library.mk:37: internal-library-all_] Error 2
+make: *** [/home/codespace/theos/makefiles/master/rules.mk:146: gamehack.all.tweak.variables] Error 2
