@@ -15,9 +15,7 @@
 static uintptr_t unityBase = 0;
 
 /* ── Original function pointers ── */
-static bool (*orig_get_bVisible)(void *self);
-static void (*orig_fowApply)(void *color, float dist, float thresh, float intensity, float fowIntensity);
-static void (*orig_fowUpdate)(void *self);
+
 
 /* ── State ── */
 static bool g_fogDisabled = false;
@@ -34,30 +32,24 @@ static bool hook_get_bVisible(void *self) {
         if (self) *(uint8_t *)((uintptr_t)self + 0xC) = 1;
         return true;
     }
-    return orig_get_bVisible(self);
+    /* Inline original: read bVisible_bool field at offset 0xC */
+    if (self) return *(uint8_t *)((uintptr_t)self + 0xC) != 0;
+    return false;
 }
 
-/* ═══════════════════════════════════════════ */
-/*  HOOK: FogOfWarSettings.Apply             */
-/*  Forces fog intensity to zero             */
-/* ═══════════════════════════════════════════ */
-static void hook_fowApply(void *color, float dist, float thresh, float intensity, float fowIntensity) {
-    if (g_fogDisabled)
-        orig_fowApply(color, dist, thresh, 0.0f, 0.0f);
-    else
-        orig_fowApply(color, dist, thresh, intensity, fowIntensity);
-}
-
-/* ═══════════════════════════════════════════ */
-/*  HOOK: PartitionedFog.UpdateFogState       */
-/*  Skips per-frame fog updates when disabled */
-/* ═══════════════════════════════════════════ */
-static void hook_fowUpdate(void *self) {
-    if (!g_fogDisabled)
-        orig_fowUpdate(self);
-}
 
 /* ── HUD Window ── */
+@interface HUDViewController : UIViewController
+@end
+@implementation HUDViewController
+- (UIInterfaceOrientationMask)supportedInterfaceOrientations {
+    return UIInterfaceOrientationMaskAll;
+}
+- (BOOL)shouldAutorotate {
+    return YES;
+}
+@end
+
 @interface HUDWindow : UIWindow
 @property (nonatomic, weak) UIView *ballView;
 @property (nonatomic, weak) UIView *panelView;
@@ -199,11 +191,11 @@ static void updateStatusUI(void) {
     if (!g_statusDot || !g_statusLabel) return;
     if (g_mapHackEnabled) {
         g_statusDot.backgroundColor = [UIColor colorWithRed:0.36 green:0.96 blue:0.53 alpha:1.0];
-        g_statusLabel.text = g_fogDisabled ? @"FULLMAP" : @"VIS ALL";
+        g_statusLabel.text = g_fogDisabled ? @"全图" : @"全可见";
         g_statusLabel.textColor = [UIColor colorWithRed:0.58 green:0.96 blue:0.72 alpha:1.0];
     } else {
         g_statusDot.backgroundColor = [UIColor colorWithWhite:0.38 alpha:1.0];
-        g_statusLabel.text = @"IDLE";
+        g_statusLabel.text = @"空闲";
         g_statusLabel.textColor = [UIColor colorWithWhite:0.58 alpha:1.0];
     }
 }
@@ -245,14 +237,11 @@ static NSString *readAll(void) {
     [s appendString:@"\n-- HOOKS --\n"];
     [s appendFormat:@"get_bVisible   0x%lX  %s\n",
         unityBase + RVA_GET_BVISIBLE, g_mapHackEnabled ? "ACTIVE" : "idle"];
-    [s appendFormat:@"FogOfWar.Apply 0x%lX  %s\n",
-        unityBase + RVA_FOW_APPLY, g_fogDisabled ? "FORCED zero" : "pass-through"];
-    [s appendFormat:@"Fog.Update     0x%lX  %s\n",
-        unityBase + RVA_FOW_UPDATE, g_fogDisabled ? "SKIPPED" : "active"];
+    
 
     [s appendString:@"\n-- STATE --\n"];
     [s appendFormat:@"MapHack        %s\n", g_mapHackEnabled ? "ON" : "OFF"];
-    [s appendFormat:@"VisualFog      %s\n", g_fogDisabled ? "CLEAR" : "NORMAL"];
+    [s appendFormat:@"VisualFog      %s\n", g_fogDisabled ? "CLEAR" : "标准"];
 
     return s;
 }
@@ -291,9 +280,9 @@ static UILabel *mkSec(NSString *txt) {
 static void showHUD(void) {
     dispatch_async(dispatch_get_main_queue(), ^{
         CGRect gb = [UIScreen mainScreen].bounds;
-        CGFloat w = MIN(340.0, CGRectGetWidth(gb) - 36.0);
-        CGFloat h = MIN(520.0, CGRectGetHeight(gb) - 36.0);
-        w = MAX(w, 290.0); h = MAX(h, 420.0);
+        CGFloat w = MIN(280.0, CGRectGetWidth(gb) * 0.55);
+        CGFloat h = MIN(380.0, CGRectGetHeight(gb) * 0.58);
+        w = MAX(w, 220.0); h = MAX(h, 300.0);
         CGFloat pad = 16.0, cw = w - pad * 2;
 
         g_hud = [[HUDWindow alloc] initWithFrame:gb];
@@ -304,7 +293,7 @@ static void showHUD(void) {
         g_hud.layer.shadowRadius = 20;
         g_hud.layer.shadowOffset = CGSizeMake(0, 10);
 
-        UIViewController *vc = [UIViewController new];
+        HUDViewController *vc = [HUDViewController new];
         vc.view.backgroundColor = [UIColor clearColor];
         g_hud.rootViewController = vc;
 
@@ -376,7 +365,7 @@ static void showHUD(void) {
         [g_panel.contentView addSubview:tb];
 
         UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(18, 0, 180, 50)];
-        title.text = @"GameHack Pro";
+        title.text = @"GameHack Pro 王者辅助 王者辅助";
         title.textColor = [UIColor whiteColor];
         title.font = [UIFont boldSystemFontOfSize:16];
         [tb addSubview:title];
@@ -387,7 +376,7 @@ static void showHUD(void) {
         [tb addSubview:g_statusDot];
 
         g_statusLabel = [[UILabel alloc] initWithFrame:CGRectMake(w - 92, 15, 64, 14)];
-        g_statusLabel.text = @"IDLE";
+        g_statusLabel.text = @"空闲";
         g_statusLabel.textColor = [UIColor colorWithWhite:0.58 alpha:1.0];
         g_statusLabel.font = [UIFont systemFontOfSize:9 weight:UIFontWeightBold];
         [tb addSubview:g_statusLabel];
@@ -408,7 +397,7 @@ static void showHUD(void) {
         CGFloat y = 62.0;
 
         /* ── FOG OF WAR SECTION ── */
-        UILabel *fogSec = mkSec(@"WAR FOG / MAP HACK");
+        UILabel *fogSec = mkSec(@"战争迷雾 / 地图透视");
         fogSec.frame = CGRectMake(pad, y, cw, 16);
         [g_panel.contentView addSubview:fogSec];
         y += 20;
@@ -418,7 +407,7 @@ static void showHUD(void) {
         fogBox.layer.cornerRadius = 14;
         [g_panel.contentView addSubview:fogBox];
 
-        UIButton *btnMapHack = mkBtn(@"ENABLE MAP HACK",
+        UIButton *btnMapHack = mkBtn(@"开启全图透视",
             [UIColor colorWithRed:0.22 green:0.65 blue:0.42 alpha:1.0],
             [UIColor whiteColor], 13);
         btnMapHack.frame = CGRectMake(12, 10, cw - 24, 36);
@@ -431,7 +420,7 @@ static void showHUD(void) {
             }
             g_mapHackEnabled = !g_mapHackEnabled;
             g_fogDisabled = g_mapHackEnabled;
-            NSString *t = g_mapHackEnabled ? @"DISABLE MAP HACK" : @"ENABLE MAP HACK";
+            NSString *t = g_mapHackEnabled ? @"关闭全图透视" : @"开启全图透视";
             UIColor *c = g_mapHackEnabled
                 ? [UIColor colorWithRed:0.88 green:0.38 blue:0.33 alpha:1.0]
                 : [UIColor colorWithRed:0.22 green:0.65 blue:0.42 alpha:1.0];
@@ -444,21 +433,21 @@ static void showHUD(void) {
 
         CGFloat sw = (cw - 40) / 2;
 
-        UIButton *btnFogVis = mkBtn(@"Clear Visual Fog",
+        UIButton *btnFogVis = mkBtn(@"清除视觉迷雾",
             [UIColor colorWithRed:0.18 green:0.45 blue:0.78 alpha:1.0],
             [UIColor whiteColor], 11);
         btnFogVis.frame = CGRectMake(12, 54, sw, 26);
         [btnFogVis addAction:[UIAction actionWithHandler:^(UIAction *act) {
             if (!g_hooksInstalled && unityBase) installHooks();
             g_fogDisabled = !g_fogDisabled;
-            NSString *t = g_fogDisabled ? @"Restore Visual Fog" : @"Clear Visual Fog";
+            NSString *t = g_fogDisabled ? @"恢复视觉迷雾" : @"清除视觉迷雾";
             [act.sender setTitle:t forState:UIControlStateNormal];
             updateStatusUI();
             g_output.text = readAll();
         }] forControlEvents:UIControlEventTouchUpInside];
         [fogBox addSubview:btnFogVis];
 
-        UIButton *btnReset = mkBtn(@"Reset All Fog",
+        UIButton *btnReset = mkBtn(@"重置全部迷雾",
             [UIColor colorWithWhite:0.24 alpha:1.0],
             [UIColor lightGrayColor], 11);
         btnReset.frame = CGRectMake(24 + sw, 54, sw, 26);
@@ -473,7 +462,7 @@ static void showHUD(void) {
         y += 100;
 
         /* ── CAMERA SECTION ── */
-        UILabel *camSec = mkSec(@"CAMERA CONTROL");
+        UILabel *camSec = mkSec(@"镜头控制");
         camSec.frame = CGRectMake(pad, y, cw, 16);
         [g_panel.contentView addSubview:camSec];
         y += 20;
@@ -483,7 +472,7 @@ static void showHUD(void) {
         camBox.layer.cornerRadius = 14;
         [g_panel.contentView addSubview:camBox];
 
-        UIButton *btnRead = mkBtn(@"READ MEMORY STATE",
+        UIButton *btnRead = mkBtn(@"读取内存状态",
             [UIColor colorWithRed:0.28 green:0.48 blue:0.92 alpha:1.0],
             [UIColor whiteColor], 13);
         btnRead.frame = CGRectMake(12, 12, cw - 24, 34);
@@ -495,13 +484,13 @@ static void showHUD(void) {
 
         CGFloat pw = (cw - 40) / 2;
         NSArray *presets = @[
-            @{@"t":@"ULTRA CLOSE", @"v":@0,
+            @{@"t":@"超近景", @"v":@0,
               @"c":[UIColor colorWithRed:0.22 green:0.74 blue:0.52 alpha:1.0]},
-            @{@"t":@"CLOSE", @"v":@1,
+            @{@"t":@"近景", @"v":@1,
               @"c":[UIColor colorWithRed:0.26 green:0.62 blue:0.88 alpha:1.0]},
-            @{@"t":@"NORMAL", @"v":@2,
+            @{@"t":@"标准", @"v":@2,
               @"c":[UIColor colorWithRed:0.88 green:0.55 blue:0.35 alpha:1.0]},
-            @{@"t":@"FAR VIEW", @"v":@5,
+            @{@"t":@"远景", @"v":@5,
               @"c":[UIColor colorWithRed:0.62 green:0.48 blue:0.88 alpha:1.0]},
         ];
         for (int i = 0; i < 4; i++) {
@@ -519,7 +508,7 @@ static void showHUD(void) {
         y += 134;
 
         /* ── OUTPUT SECTION ── */
-        UILabel *outSec = mkSec(@"RUNTIME STATUS");
+        UILabel *outSec = mkSec(@"运行状态");
         outSec.frame = CGRectMake(pad, y, cw, 16);
         [g_panel.contentView addSubview:outSec];
         y += 20;
@@ -564,25 +553,17 @@ static void installHooks(void) {
     if (!unityBase || g_hooksInstalled) return;
 
     void *a1 = (void *)(unityBase + RVA_GET_BVISIBLE);
-    void *a2 = (void *)(unityBase + RVA_FOW_APPLY);
-    void *a3 = (void *)(unityBase + RVA_FOW_UPDATE);
 
-    if (!isExecutableAddr(a1) || !isExecutableAddr(a2) || !isExecutableAddr(a3)) {
-        NSLog(@"[GameHack] WARNING: RVAs mismatch current binary version. Hooks skipped.");
+    if (!isExecutableAddr(a1)) {
+        NSLog(@"[GameHack] WARNING: RVA mismatch. Hook skipped.");
         return;
     }
 
-    MSHookFunction(a1, (void *)hook_get_bVisible, (void **)&orig_get_bVisible);
+    MSHookFunction(a1, (void *)hook_get_bVisible, NULL);
     NSLog(@"[GameHack] get_bVisible hooked @ 0x%lx", (uintptr_t)a1);
 
-    MSHookFunction(a2, (void *)hook_fowApply, (void **)&orig_fowApply);
-    NSLog(@"[GameHack] FogOfWarSettings.Apply hooked @ 0x%lx", (uintptr_t)a2);
-
-    MSHookFunction(a3, (void *)hook_fowUpdate, (void **)&orig_fowUpdate);
-    NSLog(@"[GameHack] PartitionedFog.UpdateFogState hooked @ 0x%lx", (uintptr_t)a3);
-
     g_hooksInstalled = true;
-    NSLog(@"[GameHack] All 3 fog hooks installed successfully");
+    NSLog(@"[GameHack] Map hack hook installed");
 }
 
 /* ── Constructor ── */
