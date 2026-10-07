@@ -57,14 +57,131 @@ static void hook_fowUpdate(void *self) {
 
 /* ── HUD Window ── */
 @interface HUDWindow : UIWindow
-- (void)onPan:(UIPanGestureRecognizer *)g;
+@property (nonatomic, weak) UIView *ballView;
+@property (nonatomic, weak) UIView *panelView;
+- (void)onBallPan:(UIPanGestureRecognizer *)g;
+- (void)onBallTap:(UITapGestureRecognizer *)g;
 @end
 @implementation HUDWindow
-- (void)onPan:(UIPanGestureRecognizer *)g {
+
+/* Pass through all touches that don't hit ball or panel */
+- (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
+    if (self.hidden || self.alpha < 0.01) return nil;
+    UIView *hit = [super hitTest:point withEvent:event];
+    if (hit == self || hit == self.rootViewController.view) {
+        return nil;
+    }
+    return hit;
+}
+
+- (void)onBallPan:(UIPanGestureRecognizer *)g {
+    if (!self.ballView || self.ballView.hidden) return;
+    if (g.state == UIGestureRecognizerStateBegan) {
+        // Scale up slightly during drag for feedback
+        [UIView animateWithDuration:0.15 animations:^{
+            self.ballView.transform = CGAffineTransformMakeScale(1.12, 1.12);
+        }];
+    }
     CGPoint t = [g translationInView:self];
-    CGPoint c = self.center;
-    self.center = CGPointMake(c.x + t.x, c.y + t.y);
+    CGPoint c = self.ballView.center;
+    self.ballView.center = CGPointMake(c.x + t.x, c.y + t.y);
     [g setTranslation:CGPointZero inView:self];
+    if (g.state == UIGestureRecognizerStateEnded || g.state == UIGestureRecognizerStateCancelled) {
+        // Snap back to normal scale
+        [UIView animateWithDuration:0.2 delay:0 usingSpringWithDamping:0.7 initialSpringVelocity:0.5
+            options:0 animations:^{
+                self.ballView.transform = CGAffineTransformIdentity;
+            } completion:nil];
+        // Clamp to screen bounds
+        [self clampBallToBounds];
+    }
+}
+
+- (void)onBallTap:(UITapGestureRecognizer *)g {
+    if (!self.ballView || !self.panelView) return;
+    if (g.state != UIGestureRecognizerStateEnded) return;
+
+    BOOL opening = self.panelView.hidden;
+    if (opening) {
+        [self showPanel];
+    } else {
+        [self hidePanel];
+    }
+}
+
+- (void)clampBallToBounds {
+    if (!self.ballView) return;
+    CGPoint c = self.ballView.center;
+    CGFloat r = self.ballView.bounds.size.width / 2.0;
+    CGFloat bw = self.bounds.size.width;
+    CGFloat bh = self.bounds.size.height;
+    CGFloat safe = 8.0;
+    if (c.x < r + safe) c.x = r + safe;
+    if (c.x > bw - r - safe) c.x = bw - r - safe;
+    if (c.y < r + safe + 44) c.y = r + safe + 44;
+    if (c.y > bh - r - safe - 34) c.y = bh - r - safe - 34;
+    [UIView animateWithDuration:0.25 delay:0 usingSpringWithDamping:0.65 initialSpringVelocity:0.3
+        options:UIViewAnimationOptionAllowUserInteraction animations:^{
+            self.ballView.center = c;
+        } completion:nil];
+}
+
+- (void)showPanel {
+    if (!self.ballView || !self.panelView || !self.panelView.hidden) return;
+    CGPoint bc = self.ballView.center;
+    self.panelView.center = bc;
+    self.panelView.transform = CGAffineTransformMakeScale(0.3, 0.3);
+    self.panelView.alpha = 0;
+    self.panelView.hidden = NO;
+
+    [UIView animateWithDuration:0.28 delay:0 usingSpringWithDamping:0.72 initialSpringVelocity:0.4
+        options:UIViewAnimationOptionAllowUserInteraction animations:^{
+            self.ballView.alpha = 0;
+            self.ballView.transform = CGAffineTransformMakeScale(0.1, 0.1);
+            self.panelView.alpha = 1;
+            self.panelView.transform = CGAffineTransformIdentity;
+            // Ensure panel is fully on screen
+            [self clampPanelToBounds];
+        } completion:^(BOOL done) {
+            self.ballView.hidden = YES;
+            self.ballView.transform = CGAffineTransformIdentity;
+            self.ballView.alpha = 1;
+        }];
+}
+
+- (void)hidePanel {
+    if (!self.ballView || !self.panelView || self.panelView.hidden) return;
+    self.ballView.alpha = 0;
+    self.ballView.transform = CGAffineTransformMakeScale(0.2, 0.2);
+    self.ballView.hidden = NO;
+    CGPoint bc = self.panelView.center;
+    self.ballView.center = bc;
+
+    [UIView animateWithDuration:0.22 delay:0 usingSpringWithDamping:0.8 initialSpringVelocity:0.5
+        options:UIViewAnimationOptionAllowUserInteraction animations:^{
+            self.panelView.alpha = 0;
+            self.panelView.transform = CGAffineTransformMakeScale(0.25, 0.25);
+            self.ballView.alpha = 1;
+            self.ballView.transform = CGAffineTransformIdentity;
+        } completion:^(BOOL done) {
+            self.panelView.hidden = YES;
+            self.panelView.transform = CGAffineTransformIdentity;
+            self.panelView.alpha = 1;
+        }];
+}
+
+- (void)clampPanelToBounds {
+    if (!self.panelView) return;
+    CGFloat w = self.panelView.bounds.size.width;
+    CGFloat h = self.panelView.bounds.size.height;
+    CGFloat bw = self.bounds.size.width;
+    CGFloat bh = self.bounds.size.height;
+    CGPoint c = self.panelView.center;
+    if (c.x - w/2 < 4) c.x = w/2 + 4;
+    if (c.x + w/2 > bw - 4) c.x = bw - w/2 - 4;
+    if (c.y - h/2 < 20) c.y = h/2 + 20;
+    if (c.y + h/2 > bh - 4) c.y = bh - h/2 - 4;
+    self.panelView.center = c;
 }
 @end
 
@@ -92,10 +209,14 @@ static void updateStatusUI(void) {
 /* ── Memory helpers ── */
 static uintptr_t getStaticFields(void) {
     if (!unityBase) return 0;
+    // Bounds check: slot must be within reasonable range
+    if (DATA_SLOT_STATICFIELDS > 0x20000000) return 0;
     uintptr_t slot = unityBase + DATA_SLOT_STATICFIELDS;
     uintptr_t klass = *(uintptr_t *)slot;
-    if (!klass) return 0;
-    return *(uintptr_t *)(klass + 0xB8);
+    if (!klass || klass < 0x1000 || klass > 0x200000000) return 0;
+    uintptr_t sf = *(uintptr_t *)(klass + 0xB8);
+    if (!sf || sf < 0x1000) return 0;
+    return sf;
 }
 
 static NSString *readAll(void) {
@@ -141,30 +262,7 @@ static void writeCameraHeight(int32_t v) {
 }
 
 /* ── Layout ── */
-static void updateHUDLayout(void) {
-    if (!g_hud || !g_panel) return;
-    UIWindow *window = [UIApplication sharedApplication].keyWindow;
-    if (!window) return;
 
-    CGRect gb = window.bounds;
-    CGFloat si = 20.0;
-    CGFloat mw = MIN(330.0, CGRectGetWidth(gb) - si * 2);
-    CGFloat mh = MIN(500.0, CGRectGetHeight(gb) - si * 2);
-    CGFloat w = MAX(290.0, mw);
-    CGFloat h = MAX(420.0, mh);
-
-    CGFloat x = CGRectGetMidX(gb), y = CGRectGetMidY(gb);
-    CGFloat l = si, t = si, r = CGRectGetWidth(gb) - si, b = CGRectGetHeight(gb) - si;
-    if (g_hud.center.x < l + w / 2.0) x = l + w / 2.0;
-    if (g_hud.center.x > r - w / 2.0) x = r - w / 2.0;
-    if (g_hud.center.y < t + h / 2.0) y = t + h / 2.0;
-    if (g_hud.center.y > b - h / 2.0) y = b - h / 2.0;
-
-    g_hud.frame = CGRectMake(x - w / 2.0, y - h / 2.0, w, h);
-    g_hud.rootViewController.view.frame = g_hud.bounds;
-    g_panel.frame = g_hud.bounds;
-    if (g_gradient) g_gradient.frame = g_panel.bounds;
-}
 
 /* ── UI factories ── */
 static UIButton *mkBtn(NSString *ttl, UIColor *bg, UIColor *fg, CGFloat fs) {
@@ -197,7 +295,7 @@ static void showHUD(void) {
         w = MAX(w, 290.0); h = MAX(h, 420.0);
         CGFloat pad = 16.0, cw = w - pad * 2;
 
-        g_hud = [[HUDWindow alloc] initWithFrame:CGRectMake(18, 70, w, h)];
+        g_hud = [[HUDWindow alloc] initWithFrame:gb];
         g_hud.windowLevel = UIWindowLevelAlert + 1;
         g_hud.backgroundColor = [UIColor clearColor];
         g_hud.layer.shadowColor = [UIColor blackColor].CGColor;
@@ -209,13 +307,58 @@ static void showHUD(void) {
         vc.view.backgroundColor = [UIColor clearColor];
         g_hud.rootViewController = vc;
 
-        /* ── Panel ── */
+        /* ── Floating Ball ── */
+        CGFloat ballSize = 48.0;
+        UIView *ball = [[UIView alloc] initWithFrame:CGRectMake(gb.size.width - ballSize - 20, 160, ballSize, ballSize)];
+        ball.layer.cornerRadius = ballSize / 2.0;
+        ball.layer.masksToBounds = NO;
+        ball.backgroundColor = [UIColor clearColor];
+
+        // Ball shadow
+        ball.layer.shadowColor = [UIColor blackColor].CGColor;
+        ball.layer.shadowOpacity = 0.35;
+        ball.layer.shadowRadius = 10;
+        ball.layer.shadowOffset = CGSizeMake(0, 4);
+
+        // Ball blur background
+        UIVisualEffectView *ballBlur = [[UIVisualEffectView alloc]
+            initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleDark]];
+        ballBlur.frame = ball.bounds;
+        ballBlur.layer.cornerRadius = ballSize / 2.0;
+        ballBlur.layer.masksToBounds = YES;
+        [ball addSubview:ballBlur];
+
+        // Ball icon
+        UIImageView *ballIcon = [[UIImageView alloc] initWithImage:[UIImage systemImageNamed:@"circle.grid.2x2.fill"]];
+        ballIcon.frame = CGRectMake(12, 12, ballSize - 24, ballSize - 24);
+        ballIcon.tintColor = [UIColor colorWithRed:0.55 green:0.73 blue:1.0 alpha:1.0];
+        ballIcon.contentMode = UIViewContentModeScaleAspectFit;
+        [ball addSubview:ballIcon];
+
+        // Ball gestures
+        UIPanGestureRecognizer *ballPan = [[UIPanGestureRecognizer alloc]
+            initWithTarget:g_hud action:@selector(onBallPan:)];
+        ballPan.minimumNumberOfTouches = 1;
+        ballPan.maximumNumberOfTouches = 1;
+        [ball addGestureRecognizer:ballPan];
+
+        UITapGestureRecognizer *ballTap = [[UITapGestureRecognizer alloc]
+            initWithTarget:g_hud action:@selector(onBallTap:)];
+        ballTap.numberOfTapsRequired = 1;
+        [ball addGestureRecognizer:ballTap];
+
+        [vc.view addSubview:ball];
+        g_hud.ballView = ball;
+
+        /* ── Panel (initially hidden, shown on ball tap) ── */
         g_panel = [[UIVisualEffectView alloc]
             initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleDark]];
         g_panel.frame = CGRectMake(0, 0, w, h);
         g_panel.layer.cornerRadius = 22;
         g_panel.layer.masksToBounds = YES;
+        g_panel.hidden = YES;
         [vc.view addSubview:g_panel];
+        g_hud.panelView = g_panel;
 
         g_gradient = [CAGradientLayer layer];
         g_gradient.frame = g_panel.bounds;
@@ -248,9 +391,6 @@ static void showHUD(void) {
         g_statusLabel.font = [UIFont systemFontOfSize:9 weight:UIFontWeightBold];
         [tb addSubview:g_statusLabel];
 
-        UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc]
-            initWithTarget:g_hud action:@selector(onPan:)];
-        [tb addGestureRecognizer:pan];
 
         UIButton *close = [UIButton buttonWithType:UIButtonTypeSystem];
         close.frame = CGRectMake(w - 48, 8, 34, 34);
@@ -260,7 +400,7 @@ static void showHUD(void) {
         close.layer.cornerRadius = 17;
         close.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.08];
         [close addAction:[UIAction actionWithHandler:^(UIAction *a) {
-            g_hud.hidden = YES;
+            [g_hud hidePanel];
         }] forControlEvents:UIControlEventTouchUpInside];
         [tb addSubview:close];
 
@@ -283,6 +423,11 @@ static void showHUD(void) {
         btnMapHack.frame = CGRectMake(12, 10, cw - 24, 36);
         btnMapHack.layer.cornerRadius = 10;
         [btnMapHack addAction:[UIAction actionWithHandler:^(UIAction *act) {
+            if (!g_hooksInstalled && unityBase) installHooks();
+            if (!g_hooksInstalled) {
+                g_output.text = @"[!] Hooks failed - wrong game version.\nCheck RVA offsets match binary.";
+                return;
+            }
             g_mapHackEnabled = !g_mapHackEnabled;
             g_fogDisabled = g_mapHackEnabled;
             NSString *t = g_mapHackEnabled ? @"DISABLE MAP HACK" : @"ENABLE MAP HACK";
@@ -303,6 +448,7 @@ static void showHUD(void) {
             [UIColor whiteColor], 11);
         btnFogVis.frame = CGRectMake(12, 54, sw, 26);
         [btnFogVis addAction:[UIAction actionWithHandler:^(UIAction *act) {
+            if (!g_hooksInstalled && unityBase) installHooks();
             g_fogDisabled = !g_fogDisabled;
             NSString *t = g_fogDisabled ? @"Restore Visual Fog" : @"Clear Visual Fog";
             [act.sender setTitle:t forState:UIControlStateNormal];
@@ -383,53 +529,59 @@ static void showHUD(void) {
         g_output.textColor = [UIColor colorWithRed:0.62 green:0.94 blue:0.72 alpha:1.0];
         g_output.font = [UIFont fontWithName:@"Menlo" size:10];
         g_output.editable = NO;
-        g_output.text = @"Initializing...";
+        g_output.text = @"";
         g_output.layer.cornerRadius = 12;
         g_output.layer.borderWidth = 1;
         g_output.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.06].CGColor;
         g_output.textContainerInset = UIEdgeInsetsMake(8, 10, 8, 10);
         [g_panel.contentView addSubview:g_output];
 
-        [[NSNotificationCenter defaultCenter]
-            addObserverForName:UIWindowDidBecomeKeyNotification object:nil
-            queue:[NSOperationQueue mainQueue]
-            usingBlock:^(NSNotification *n) { updateHUDLayout(); }];
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wdeprecated-declarations"
-        [[NSNotificationCenter defaultCenter]
-            addObserverForName:UIApplicationDidChangeStatusBarOrientationNotification object:nil
-            queue:[NSOperationQueue mainQueue]
-            usingBlock:^(NSNotification *n) { updateHUDLayout(); }];
-#pragma clang diagnostic pop
 
-        updateHUDLayout();
-        g_hud.hidden = NO;
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 500 * NSEC_PER_MSEC),
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 3000 * NSEC_PER_MSEC),
             dispatch_get_main_queue(), ^{
                 g_output.text = readAll();
             });
     });
 }
 
+/* ── ARM64 instruction validation ── */
+static bool isExecutableAddr(void *addr) {
+    if (!addr || (uintptr_t)addr < 0x1000) return false;
+    // Check page alignment and read one instruction to verify
+    uint32_t *insn = (uint32_t *)addr;
+    uint32_t v = *insn;
+    // Valid ARM64 instructions have non-zero upper bits (not all zeros, not 0xFFFFFFFF)
+    return (v != 0 && v != 0xFFFFFFFF && v != 0xD4200000);
+}
+
 /* ═══════════════════════════════════════════ */
-/*  HOOK INSTALL                             */
+/*  HOOK INSTALL (on-demand, validated)       */
 /* ═══════════════════════════════════════════ */
+static bool g_hooksInstalled = false;
+
 static void installHooks(void) {
-    if (!unityBase) return;
+    if (!unityBase || g_hooksInstalled) return;
 
     void *a1 = (void *)(unityBase + RVA_GET_BVISIBLE);
-    MSHookFunction(a1, (void *)hook_get_bVisible, (void **)&orig_get_bVisible);
-    NSLog(@"[GameHack] FowVisibleResult.get_bVisible @ 0x%lx", (uintptr_t)a1);
-
     void *a2 = (void *)(unityBase + RVA_FOW_APPLY);
-    MSHookFunction(a2, (void *)hook_fowApply, (void **)&orig_fowApply);
-    NSLog(@"[GameHack] FogOfWarSettings.Apply @ 0x%lx", (uintptr_t)a2);
-
     void *a3 = (void *)(unityBase + RVA_FOW_UPDATE);
-    MSHookFunction(a3, (void *)hook_fowUpdate, (void **)&orig_fowUpdate);
-    NSLog(@"[GameHack] PartitionedFog.UpdateFogState @ 0x%lx", (uintptr_t)a3);
 
-    NSLog(@"[GameHack] All 3 fog hooks installed");
+    if (!isExecutableAddr(a1) || !isExecutableAddr(a2) || !isExecutableAddr(a3)) {
+        NSLog(@"[GameHack] WARNING: RVAs mismatch current binary version. Hooks skipped.");
+        return;
+    }
+
+    MSHookFunction(a1, (void *)hook_get_bVisible, (void **)&orig_get_bVisible);
+    NSLog(@"[GameHack] get_bVisible hooked @ 0x%lx", (uintptr_t)a1);
+
+    MSHookFunction(a2, (void *)hook_fowApply, (void **)&orig_fowApply);
+    NSLog(@"[GameHack] FogOfWarSettings.Apply hooked @ 0x%lx", (uintptr_t)a2);
+
+    MSHookFunction(a3, (void *)hook_fowUpdate, (void **)&orig_fowUpdate);
+    NSLog(@"[GameHack] PartitionedFog.UpdateFogState hooked @ 0x%lx", (uintptr_t)a3);
+
+    g_hooksInstalled = true;
+    NSLog(@"[GameHack] All 3 fog hooks installed successfully");
 }
 
 /* ── Constructor ── */
@@ -444,7 +596,7 @@ static void installHooks(void) {
             }
         }
         NSLog(@"[GameHack] UnityFramework base: 0x%lx", unityBase);
-        if (unityBase) installHooks();
+        // Hooks installed on-demand by button press (not at startup)
         showHUD();
     });
 }
