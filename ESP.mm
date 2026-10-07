@@ -10,6 +10,7 @@ M4x4 g_viewMat, g_projMat;
 bool g_matValid = false;
 UIWindow *g_espWin = nil;
 bool g_mapHackEnabled = false;
+bool g_mapHackInstalled = false;
 
 extern uintptr_t unityBase;
 
@@ -51,15 +52,20 @@ static uintptr_t getStaticFields(void) {
     return *(uintptr_t*)(klass+0xB8);
 }
 
-void enableMapHack(void) {
+void installMapHack(void) {
     uintptr_t sf=getStaticFields();
     if(!sf){NSLog(@"[GameHack] MapHack: static fields not found");return;}
     *(uint32_t*)(sf+0x128)=0;
     *(uint32_t*)(sf+0x130)=0;
     *(uint32_t*)(sf+0x138)=0;
     *(uint32_t*)(sf+0x140)=0;
+    g_mapHackInstalled=true;
     g_mapHackEnabled=true;
     NSLog(@"[GameHack] MapHack: fog params zeroed");
+}
+
+void enableMapHack(void) {
+    g_mapHackEnabled=true;
 }
 
 void disableMapHack(void) {
