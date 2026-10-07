@@ -11,7 +11,7 @@
 #define RVA_FOW_UPDATE        0x16C9DCC  // PartitionedFog$$UpdateFogState
 
 #define DATA_SLOT_STATICFIELDS 0x1355AC68
-static uintptr_t unityBase = 0;
+uintptr_t unityBase = 0;
 
 /* ── Original function pointers ── */
 
@@ -580,10 +580,10 @@ typedef void* (*il2cpp_class_from_name_t)(void* image, const char* ns, const cha
 typedef struct { void* methodPointer; uint8_t _pad[48]; } Il2CppMethodInfo;
 typedef Il2CppMethodInfo* (*il2cpp_class_get_method_from_name_t)(void* klass, const char* name, int args);
 
-static il2cpp_class_from_name_t p_il2cpp_class_from_name = NULL;
-static il2cpp_class_get_method_from_name_t p_il2cpp_class_get_method_from_name = NULL;
+il2cpp_class_from_name_t p_il2cpp_class_from_name = NULL;
+il2cpp_class_get_method_from_name_t p_il2cpp_class_get_method_from_name = NULL;
 
-static bool initIl2CppAPI(void) {
+bool initIl2CppAPI(void) {
     if (p_il2cpp_class_from_name && p_il2cpp_class_get_method_from_name)
         return true;
 
