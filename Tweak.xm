@@ -8,8 +8,15 @@
 static uintptr_t unityBase = 0;
 
 @interface HUDWindow : UIWindow
+- (void)onPan:(UIPanGestureRecognizer *)g;
 @end
 @implementation HUDWindow
+- (void)onPan:(UIPanGestureRecognizer *)g {
+    CGPoint t = [g translationInView:self];
+    CGPoint c = self.center;
+    self.center = CGPointMake(c.x + t.x, c.y + t.y);
+    [g setTranslation:CGPointZero inView:self];
+}
 @end
 
 static HUDWindow *g_hud = nil;
@@ -67,7 +74,6 @@ static void showHUD(void) {
         vc.view.backgroundColor = [UIColor clearColor];
         g_hud.rootViewController = vc;
 
-        // 标题栏（拖拽区）
         UIView *titleBar = [[UIView alloc] initWithFrame:CGRectMake(0, 0, w, 44)];
         titleBar.backgroundColor = [UIColor colorWithWhite:0.2 alpha:1];
         [vc.view addSubview:titleBar];
@@ -78,19 +84,10 @@ static void showHUD(void) {
         title.font = [UIFont boldSystemFontOfSize:16];
         [titleBar addSubview:title];
 
-        // 拖拽手势
         UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc]
-            initWithTarget:nil action:nil];
+            initWithTarget:g_hud action:@selector(onPan:)];
         [titleBar addGestureRecognizer:pan];
-        __weak HUDWindow *weakHud = g_hud;
-        [pan addAction:[UIAction actionWithHandler:^(UIPanGestureRecognizer *g) {
-            CGPoint t = [g translationInView:weakHud];
-            CGPoint c = weakHud.center;
-            weakHud.center = CGPointMake(c.x + t.x, c.y + t.y);
-            [g setTranslation:CGPointZero inView:weakHud];
-        }]];
 
-        // 关闭按钮
         UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
         closeBtn.frame = CGRectMake(w - 44, 0, 44, 44);
         [closeBtn setTitle:@"✕" forState:UIControlStateNormal];
@@ -101,7 +98,6 @@ static void showHUD(void) {
         }] forControlEvents:UIControlEventTouchUpInside];
         [titleBar addSubview:closeBtn];
 
-        // 读取按钮
         UIButton *readBtn = [UIButton buttonWithType:UIButtonTypeSystem];
         readBtn.frame = CGRectMake(12, 56, w - 24, 40);
         [readBtn setTitle:@"读取" forState:UIControlStateNormal];
@@ -113,7 +109,6 @@ static void showHUD(void) {
         }] forControlEvents:UIControlEventTouchUpInside];
         [vc.view addSubview:readBtn];
 
-        // 输出区
         g_output = [[UITextView alloc] initWithFrame:CGRectMake(12, 106, w - 24, h - 118)];
         g_output.backgroundColor = [UIColor colorWithWhite:0 alpha:0.5];
         g_output.textColor = [UIColor greenColor];
