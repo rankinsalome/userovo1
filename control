@@ -1,8 +1,8 @@
 Package: com.yourname.gamehack
-Name: GameHack
-Version: 1.0.0
+Name: GameHack Pro
+Version: 2.0.0
 Architecture: iphoneos-arm
-Description: camera height tweak
+Description: War fog bypass / map hack / camera control for Honor of Kings
 Maintainer: you
 Author: you
 Section: Tweaks
