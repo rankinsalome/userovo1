@@ -22,6 +22,8 @@ static void (*orig_fowUpdate)(void *self);
 /* ── State ── */
 static bool g_fogDisabled = false;
 static bool g_mapHackEnabled = false;
+static bool g_hooksInstalled = false;
+static void installHooks(void); // forward decl
 
 /* ═══════════════════════════════════════════ */
 /*  HOOK: FowVisibleResult.get_bVisible      */
@@ -288,8 +290,7 @@ static UILabel *mkSec(NSString *txt) {
 /* ═══════════════════════════════════════════ */
 static void showHUD(void) {
     dispatch_async(dispatch_get_main_queue(), ^{
-        UIWindow *window = [UIApplication sharedApplication].keyWindow;
-        CGRect gb = window ? window.bounds : [UIScreen mainScreen].bounds;
+        CGRect gb = [UIScreen mainScreen].bounds;
         CGFloat w = MIN(340.0, CGRectGetWidth(gb) - 36.0);
         CGFloat h = MIN(520.0, CGRectGetHeight(gb) - 36.0);
         w = MAX(w, 290.0); h = MAX(h, 420.0);
@@ -557,7 +558,6 @@ static bool isExecutableAddr(void *addr) {
 /* ═══════════════════════════════════════════ */
 /*  HOOK INSTALL (on-demand, validated)       */
 /* ═══════════════════════════════════════════ */
-static bool g_hooksInstalled = false;
 
 static void installHooks(void) {
     if (!unityBase || g_hooksInstalled) return;
