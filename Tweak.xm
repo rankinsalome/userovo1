@@ -3,15 +3,14 @@
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
 #import <dispatch/dispatch.h>
+#import <dlfcn.h>
 #include <string.h>
 
-/* ── RVA offsets from UnityFramework base (from smoba IL2CPP dump) ── */
-#define RVA_GET_BVISIBLE      0x164CE50  // FowVisibleResult$$get_bVisible
+/* ── memory read slot (kept from original tweak) ── */
 #define RVA_FOW_APPLY         0x16C4598  // FogOfWarSettings$$Apply
 #define RVA_FOW_UPDATE        0x16C9DCC  // PartitionedFog$$UpdateFogState
 
 #define DATA_SLOT_STATICFIELDS 0x1355AC68
-
 static uintptr_t unityBase = 0;
 
 /* ── Original function pointers ── */
@@ -24,8 +23,8 @@ static bool g_hooksInstalled = false;
 static void installHooks(void); // forward decl
 
 /* ═══════════════════════════════════════════ */
-/*  HOOK: FowVisibleResult.get_bVisible      */
-/*  Forces all units visible when enabled    */
+/*  HOOK: generic fog visibility bypass     */
+/*  Forces all units visible when enabled   */
 /* ═══════════════════════════════════════════ */
 static bool hook_get_bVisible(void *self) {
     if (g_mapHackEnabled) {
@@ -235,8 +234,8 @@ static NSString *readAll(void) {
     }
 
     [s appendString:@"\n-- HOOKS --\n"];
-    [s appendFormat:@"get_bVisible   0x%lX  %s\n",
-        unityBase + RVA_GET_BVISIBLE, g_mapHackEnabled ? "ACTIVE" : "idle"];
+    [s appendFormat:@"MapHackHook     %s\n",
+        g_hooksInstalled ? "INSTALLED" : "NOT INSTALLED"];
     
 
     [s appendString:@"\n-- STATE --\n"];
@@ -535,38 +534,84 @@ static void showHUD(void) {
     });
 }
 
-/* ── ARM64 instruction validation ── */
-static bool isExecutableAddr(void *addr) {
-    if (!addr || (uintptr_t)addr < 0x1000) return false;
-    // Check page alignment and read one instruction to verify
-    uint32_t *insn = (uint32_t *)addr;
-    uint32_t v = *insn;
-    // Valid ARM64 instructions have non-zero upper bits (not all zeros, not 0xFFFFFFFF)
-    return (v != 0 && v != 0xFFFFFFFF && v != 0xD4200000);
+/* ── IL2CPP runtime function typedefs ── */
+typedef void* (*il2cpp_class_from_name_t)(void* image, const char* ns, const char* name);
+typedef struct { void* methodPointer; uint8_t _pad[48]; } Il2CppMethodInfo;
+typedef Il2CppMethodInfo* (*il2cpp_class_get_method_from_name_t)(void* klass, const char* name, int args);
+
+static il2cpp_class_from_name_t p_il2cpp_class_from_name = NULL;
+static il2cpp_class_get_method_from_name_t p_il2cpp_class_get_method_from_name = NULL;
+static bool g_hooksInstalled = false;
+
+static bool initIl2CppAPI(void) {
+    if (p_il2cpp_class_from_name && p_il2cpp_class_get_method_from_name)
+        return true;
+
+    p_il2cpp_class_from_name = dlsym(RTLD_DEFAULT, "il2cpp_class_from_name");
+    p_il2cpp_class_get_method_from_name = dlsym(RTLD_DEFAULT, "il2cpp_class_get_method_from_name");
+
+    if (!p_il2cpp_class_from_name || !p_il2cpp_class_get_method_from_name) {
+        NSLog(@"[GameHack] dlsym: il2cpp API not found in UnityFramework");
+        return false;
+    }
+    NSLog(@"[GameHack] il2cpp API resolved via dlsym");
+    return true;
 }
 
-/* ═══════════════════════════════════════════ */
-/*  HOOK INSTALL (on-demand, validated)       */
-/* ═══════════════════════════════════════════ */
+static void* resolveIl2CppMethod(const char* ns, const char* klassName, const char* methodName, int args) {
+    if (!initIl2CppAPI()) return NULL;
+
+    void* klass = p_il2cpp_class_from_name(NULL, ns, klassName);
+    if (!klass) {
+        NSLog(@"[GameHack] class not found: %s.%s", ns, klassName);
+        return NULL;
+    }
+
+    Il2CppMethodInfo* method = p_il2cpp_class_get_method_from_name(klass, methodName, args);
+    if (!method || !method->methodPointer) {
+        NSLog(@"[GameHack] method not found: %s.%s$$%s", ns, klassName, methodName);
+        return NULL;
+    }
+
+    NSLog(@"[GameHack] resolved %s.%s$$%s @ 0x%lx",
+          ns, klassName, methodName, (uintptr_t)method->methodPointer);
+    return method->methodPointer;
+}
 
 static void installHooks(void) {
     if (!unityBase || g_hooksInstalled) return;
+    if (!initIl2CppAPI()) return;
 
-    void *a1 = (void *)(unityBase + RVA_GET_BVISIBLE);
+    void* target = NULL;
+    const char* found = NULL;
 
-    if (!isExecutableAddr(a1)) {
-        NSLog(@"[GameHack] WARNING: RVA mismatch. Hook skipped.");
+    // Try 1: FowVisibleResult.get_bVisible (struct, global ns)
+    target = resolveIl2CppMethod("", "FowVisibleResult", "get_bVisible", 0);
+    if (target) found = "FowVisibleResult.get_bVisible";
+
+    // Try 2: FogOfWar.UpdateFogState (class, global ns)
+    if (!target) {
+        target = resolveIl2CppMethod("", "FogOfWar", "UpdateFogState", 0);
+        if (target) found = "FogOfWar.UpdateFogState";
+    }
+
+    // Try 3: FogOfWarSettings.Apply (private static, 5 params)
+    if (!target) {
+        target = resolveIl2CppMethod("", "FogOfWarSettings", "Apply", 5);
+        if (target) found = "FogOfWarSettings.Apply";
+    }
+
+    if (!target) {
+        NSLog(@"[GameHack] No fog method resolved. Map hack unavailable.");
         return;
     }
 
-    MSHookFunction(a1, (void *)hook_get_bVisible, NULL);
-    NSLog(@"[GameHack] get_bVisible hooked @ 0x%lx", (uintptr_t)a1);
-
+    MSHookFunction(target, (void*)hook_get_bVisible, NULL);
     g_hooksInstalled = true;
-    NSLog(@"[GameHack] Map hack hook installed");
+    NSLog(@"[GameHack] Hooked %s @ 0x%lx", found, (uintptr_t)target);
 }
 
-/* ── Constructor ── */
+
 %ctor {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 6 * NSEC_PER_SEC),
                    dispatch_get_main_queue(), ^{
