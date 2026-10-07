@@ -122,7 +122,18 @@ static bool hook_get_bVisible(void *self) {
 - (void)showPanel {
     if (!self.ballView || !self.panelView || !self.panelView.hidden) return;
     CGPoint bc = self.ballView.center;
-    self.panelView.center = bc;
+    CGFloat pw = self.panelView.bounds.size.width;
+    CGFloat ph = self.panelView.bounds.size.height;
+    CGFloat sw = self.bounds.size.width;
+    CGFloat sh = self.bounds.size.height;
+    CGFloat px, py;
+    if (bc.x + pw + 16 < sw) px = bc.x + 12; else px = bc.x - pw - 12;
+    if (bc.y + ph + 16 < sh) py = bc.y + 12; else py = bc.y - ph - 12;
+    if (px < 8) px = 8;
+    if (px + pw > sw - 8) px = sw - pw - 8;
+    if (py < 44) py = 44;
+    if (py + ph > sh - 16) py = sh - ph - 16;
+    self.panelView.frame = CGRectMake(px, py, pw, ph);
     self.panelView.transform = CGAffineTransformMakeScale(0.3, 0.3);
     self.panelView.alpha = 0;
     self.panelView.hidden = NO;
@@ -133,12 +144,10 @@ static bool hook_get_bVisible(void *self) {
             self.ballView.transform = CGAffineTransformMakeScale(0.1, 0.1);
             self.panelView.alpha = 1;
             self.panelView.transform = CGAffineTransformIdentity;
-            // Ensure panel is fully on screen
-            [self clampPanelToBounds];
         } completion:^(BOOL done) {
+            self.ballView.alpha = 1;
             self.ballView.hidden = YES;
             self.ballView.transform = CGAffineTransformIdentity;
-            self.ballView.alpha = 1;
         }];
 }
 
@@ -541,14 +550,13 @@ typedef Il2CppMethodInfo* (*il2cpp_class_get_method_from_name_t)(void* klass, co
 
 static il2cpp_class_from_name_t p_il2cpp_class_from_name = NULL;
 static il2cpp_class_get_method_from_name_t p_il2cpp_class_get_method_from_name = NULL;
-static bool g_hooksInstalled = false;
 
 static bool initIl2CppAPI(void) {
     if (p_il2cpp_class_from_name && p_il2cpp_class_get_method_from_name)
         return true;
 
-    p_il2cpp_class_from_name = dlsym(RTLD_DEFAULT, "il2cpp_class_from_name");
-    p_il2cpp_class_get_method_from_name = dlsym(RTLD_DEFAULT, "il2cpp_class_get_method_from_name");
+    p_il2cpp_class_from_name = (il2cpp_class_from_name_t)dlsym(RTLD_DEFAULT, "il2cpp_class_from_name");
+    p_il2cpp_class_get_method_from_name = (il2cpp_class_get_method_from_name_t)dlsym(RTLD_DEFAULT, "il2cpp_class_get_method_from_name");
 
     if (!p_il2cpp_class_from_name || !p_il2cpp_class_get_method_from_name) {
         NSLog(@"[GameHack] dlsym: il2cpp API not found in UnityFramework");
