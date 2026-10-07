@@ -290,7 +290,7 @@ static void showHUD(void) {
                 ? [UIColor colorWithRed:0.88 green:0.38 blue:0.33 alpha:1.0]
                 : [UIColor colorWithRed:0.22 green:0.65 blue:0.42 alpha:1.0];
             [act.sender setTitle:t forState:UIControlStateNormal];
-            act.sender.backgroundColor = c;
+            ((UIButton *)act.sender).backgroundColor = c;
             updateStatusUI();
             g_output.text = readAll();
         }] forControlEvents:UIControlEventTouchUpInside];
@@ -394,10 +394,13 @@ static void showHUD(void) {
             addObserverForName:UIWindowDidBecomeKeyNotification object:nil
             queue:[NSOperationQueue mainQueue]
             usingBlock:^(NSNotification *n) { updateHUDLayout(); }];
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
         [[NSNotificationCenter defaultCenter]
             addObserverForName:UIApplicationDidChangeStatusBarOrientationNotification object:nil
             queue:[NSOperationQueue mainQueue]
             usingBlock:^(NSNotification *n) { updateHUDLayout(); }];
+#pragma clang diagnostic pop
 
         updateHUDLayout();
         g_hud.hidden = NO;
