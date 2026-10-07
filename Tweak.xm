@@ -1,5 +1,8 @@
 #import <substrate.h>
 #import <mach-o/dyld.h>
+#import <Foundation/Foundation.h>
+#import <dispatch/dispatch.h>
+#include <string.h>
 
 static uintptr_t unityBase = 0;
 static float (*orig_GetRate)(void);
