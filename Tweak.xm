@@ -19,7 +19,8 @@ static uintptr_t unityBase = 0;
 /* ── State ── */
 static bool g_fogDisabled = false;
 static bool g_mapHackEnabled = false;
-static bool g_hooksInstalled = false;
+static bool g_mapHackInstalled = false;
+/* NOTE: g_mapHackInstalled is legacy, use g_mapHackInstalled for map hack */
 
 /* ESP externs */
 extern bool g_espEnabled;
@@ -27,6 +28,8 @@ extern void showESPOverlay(void);
 extern void hideESPOverlay(void);
 extern void updateESPMatrices(void);
 extern void updateESPEntities(void);
+extern void installMapHack(void);
+extern bool g_mapHackInstalled;
 
 
 /* ═══════════════════════════════════════════ */
@@ -251,7 +254,7 @@ static NSString *readAll(void) {
 
     [s appendString:@"\n-- HOOKS --\n"];
     [s appendFormat:@"MapHackHook     %s\n",
-        g_hooksInstalled ? "INSTALLED" : "NOT INSTALLED"];
+        g_mapHackInstalled ? "INSTALLED" : "NOT INSTALLED"];
     
 
     [s appendString:@"\n-- STATE --\n"];
@@ -428,8 +431,8 @@ static void showHUD(void) {
         btnMapHack.frame = CGRectMake(12, 10, cw - 24, 36);
         btnMapHack.layer.cornerRadius = 10;
         [btnMapHack addAction:[UIAction actionWithHandler:^(UIAction *act) {
-            if (!g_hooksInstalled && unityBase) installHooks();
-            if (!g_hooksInstalled) {
+            if (!g_mapHackInstalled && unityBase) installMapHack();
+            if (!g_mapHackInstalled) {
                 g_output.text = @"[!] Hooks failed - wrong game version.\nCheck RVA offsets match binary.";
                 return;
             }
@@ -453,7 +456,7 @@ static void showHUD(void) {
             [UIColor whiteColor], 11);
         btnFogVis.frame = CGRectMake(12, 54, sw, 26);
         [btnFogVis addAction:[UIAction actionWithHandler:^(UIAction *act) {
-            if (!g_hooksInstalled && unityBase) installHooks();
+            if (!g_mapHackInstalled && unityBase) installMapHack();
             g_fogDisabled = !g_fogDisabled;
             NSString *t = g_fogDisabled ? @"恢复视觉迷雾" : @"清除视觉迷雾";
             [act.sender setTitle:t forState:UIControlStateNormal];
@@ -615,22 +618,6 @@ static void* resolveIl2CppMethod(const char* ns, const char* klassName, const ch
     return method->methodPointer;
 }
 
-static void installHooks(void) {
-    if (!unityBase || g_hooksInstalled) return;
-    if (!initIl2CppAPI()) return;
-
-    void* target = NULL;
-    const char* found = NULL;
-
-    // Try 1: FowVisibleResult.get_bVisible (struct, global ns)
-    target = resolveIl2CppMethod("", "FowVisibleResult", "get_bVisible", 0);
-    if (target) found = "FowVisibleResult.get_bVisible";
-
-    // Try 2: FogOfWar.UpdateFogState (class, global ns)
-    if (!target) {
-        target = resolveIl2CppMethod("", "FogOfWar", "UpdateFogState", 0);
-        if (target) found = "FogOfWar.UpdateFogState";
-    }
 
     // Try 3: FogOfWarSettings.Apply (private static, 5 params)
     if (!target) {
@@ -644,7 +631,7 @@ static void installHooks(void) {
     }
 
     MSHookFunction(target, (void*)hook_get_bVisible, NULL);
-    g_hooksInstalled = true;
+    g_mapHackInstalled = true;
     NSLog(@"[GameHack] Hooked %s @ 0x%lx", found, (uintptr_t)target);
 }
 
