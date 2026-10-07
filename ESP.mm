@@ -103,10 +103,11 @@ void updateESPEntities(void) {
     }
 }
 
+static bool hook_bv(void* self) { return true; }
+
 void installMapHack(void) {
     if(!initIl2CppAPI()||!unityBase||g_mapHackInstalled)return;
     static bool (*orig_bv[3])(void*);
-    static bool hook_bv(void* self) { return true; }
     const char* names[3]={"SpawnActorData","ActorPrepareData","FowVisibleResult"};
     int hooked=0;
     for(int i=0;i<3;i++){void* cls=p_il2cpp_class_from_name(NULL,"",names[i]);
