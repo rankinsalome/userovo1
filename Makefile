@@ -6,6 +6,6 @@ include $(THEOS)/makefiles/common.mk
 
 TWEAK_NAME = gamehack
 gamehack_FILES = Tweak.xm
-gamehack_CFLAGS = -fobjc-arc
+gamehack_CFLAGS = -fobjc-arc -Wno-error -Wno-unused-function
 
 include $(THEOS)/makefiles/tweak.mk

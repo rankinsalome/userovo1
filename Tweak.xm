@@ -19,11 +19,9 @@ static void doRead(void) {
         NSLog(@"[GameHack] unityBase not set");
         return;
     }
-    // 读 GetCameraHeightRateValue 入口指令
     uint32_t insn = *(uint32_t *)(unityBase + 0x1DCB5AC);
     NSLog(@"[GameHack] insn @ 0x1DCB5AC = 0x%08x", insn);
 
-    // 读 GameSettings 类指针全局槽
     uintptr_t slot = unityBase + 0x1355AC68;
     uintptr_t klass = *(uintptr_t *)slot;
     NSLog(@"[GameHack] klass = 0x%lx", klass);
@@ -35,7 +33,6 @@ static void doRead(void) {
             int32_t cameraHeight = *(int32_t *)(staticFields + 0x1AC);
             NSLog(@"[GameHack] cameraHeight = %d", cameraHeight);
 
-            // 四个 TssSdtFloat 字段的原始字节
             uint32_t f128 = *(uint32_t *)(staticFields + 0x128);
             uint32_t f130 = *(uint32_t *)(staticFields + 0x130);
             uint32_t f138 = *(uint32_t *)(staticFields + 0x138);
@@ -61,17 +58,35 @@ static void showHUD(void) {
         UIButton *btn = [UIButton buttonWithType:UIButtonTypeSystem];
         btn.frame = CGRectMake(10, 50, 200, 40);
         [btn setTitle:@"读取" forState:UIControlStateNormal];
-        [btn addTarget:nil action:@selector(readTapped)
-      forControlEvents:UIControlEventTouchUpInside];
+        [btn addAction:[UIAction actionWithHandler:^(UIAction *a) {
+            doRead();
+        }] forControlEvents:UIControlEventTouchUpInside];
         [g_hud.rootViewController.view addSubview:btn];
 
         UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
         closeBtn.frame = CGRectMake(10, 100, 200, 40);
         [closeBtn setTitle:@"关闭" forState:UIControlStateNormal];
-        [closeBtn addTarget:nil action:@selector(closeTapped)
-           forControlEvents:UIControlEventTouchUpInside];
+        [closeBtn addAction:[UIAction actionWithHandler:^(UIAction *a) {
+            g_hud.hidden = YES;
+        }] forControlEvents:UIControlEventTouchUpInside];
         [g_hud.rootViewController.view addSubview:closeBtn];
 
         g_hud.hidden = NO;
+        NSLog(@"[GameHack] HUD shown");
+    });
+}
+
+%ctor {
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 8 * NSEC_PER_SEC),
+                   dispatch_get_main_queue(), ^{
+        for (uint32_t i = 0; i < _dyld_image_count(); i++) {
+            const char *n = _dyld_get_image_name(i);
+            if (n && strstr(n, "UnityFramework")) {
+                unityBase = (uintptr_t)_dyld_get_image_header(i);
+                NSLog(@"[GameHack] unityBase=0x%lx", unityBase);
+                break;
+            }
+        }
+        if (unityBase) showHUD();
     });
 }
