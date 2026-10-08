@@ -695,6 +695,8 @@ typedef struct Il2CppObject Il2CppObject;
 typedef struct Il2CppException Il2CppException;
 typedef Il2CppObject* (*il2cpp_runtime_invoke_t)(const Il2CppMethodInfo *method, void* obj, void** params, Il2CppException** exc);
 typedef const Il2CppMethodInfo* (*il2cpp_class_get_method_from_name_t)(void* klass, const char* name, int args);
+typedef void* (*il2cpp_object_unbox_t)(Il2CppObject *obj);
+typedef struct { float x, y, z; } Il2CppVector3;
 
 static void probeCandidateMethods(void *klass, const char *imageName, const char *classNs, const char *className);
 static BOOL isReadableExecutablePointer(void *ptr);
@@ -711,6 +713,7 @@ il2cpp_class_get_namespace_t p_il2cpp_class_get_namespace = NULL;
 il2cpp_class_from_name_t p_il2cpp_class_from_name = NULL;
 il2cpp_class_get_method_from_name_t p_il2cpp_class_get_method_from_name = NULL;
 il2cpp_runtime_invoke_t p_il2cpp_runtime_invoke = NULL;
+il2cpp_object_unbox_t p_il2cpp_object_unbox = NULL;
 
 bool initIl2CppAPI(void) {
     if (p_il2cpp_domain_get && p_il2cpp_domain_get_assemblies &&
@@ -732,6 +735,7 @@ bool initIl2CppAPI(void) {
     p_il2cpp_class_from_name = (il2cpp_class_from_name_t)dlsym(RTLD_DEFAULT, "il2cpp_class_from_name");
     p_il2cpp_class_get_method_from_name = (il2cpp_class_get_method_from_name_t)dlsym(RTLD_DEFAULT, "il2cpp_class_get_method_from_name");
     p_il2cpp_runtime_invoke = (il2cpp_runtime_invoke_t)dlsym(RTLD_DEFAULT, "il2cpp_runtime_invoke");
+    p_il2cpp_object_unbox = (il2cpp_object_unbox_t)dlsym(RTLD_DEFAULT, "il2cpp_object_unbox");
 
     if (!p_il2cpp_domain_get || !p_il2cpp_domain_get_assemblies ||
         !p_il2cpp_assembly_get_image || !p_il2cpp_image_get_name ||
@@ -747,8 +751,8 @@ bool initIl2CppAPI(void) {
             p_il2cpp_class_from_name != NULL, p_il2cpp_class_get_method_from_name != NULL]);
         return false;
     }
-    runtimeLog([NSString stringWithFormat:@"il2cpp API resolved via dlsym runtime_invoke=%d",
-        p_il2cpp_runtime_invoke != NULL]);
+    runtimeLog([NSString stringWithFormat:@"il2cpp API resolved via dlsym runtime_invoke=%d object_unbox=%d",
+        p_il2cpp_runtime_invoke != NULL, p_il2cpp_object_unbox != NULL]);
     return true;
 }
 
@@ -870,6 +874,52 @@ static void probeMainCameraGetter(void) {
         Il2CppObject *camera = p_il2cpp_runtime_invoke(method, NULL, NULL, &exception);
         runtimeLog([NSString stringWithFormat:@"camera getter result camera=0x%lx exception=0x%lx",
             (uintptr_t)camera, (uintptr_t)exception]);
+        if (!camera || exception) return;
+
+        const Il2CppMethodInfo *getTransform =
+            p_il2cpp_class_get_method_from_name(klass, "get_transform", 0);
+        if (!getTransform) {
+            runtimeLog(@"camera transform probe skipped: MethodInfo unresolved");
+            return;
+        }
+        exception = NULL;
+        Il2CppObject *transform = p_il2cpp_runtime_invoke(getTransform, camera, NULL, &exception);
+        runtimeLog([NSString stringWithFormat:@"camera transform result transform=0x%lx exception=0x%lx",
+            (uintptr_t)transform, (uintptr_t)exception]);
+        if (!transform || exception) return;
+
+        void *transformImage = NULL;
+        for (size_t j = 0; j < count; j++) {
+            void *candidateImage = assemblies[j] ? p_il2cpp_assembly_get_image(assemblies[j]) : NULL;
+            const char *candidateName = candidateImage ? p_il2cpp_image_get_name(candidateImage) : NULL;
+            if (candidateName && strcmp(candidateName, "UnityEngine.CoreModule.dll") == 0) {
+                transformImage = candidateImage;
+                break;
+            }
+        }
+        void *transformClass = transformImage ?
+            p_il2cpp_class_from_name(transformImage, "UnityEngine", "Transform") : NULL;
+        const Il2CppMethodInfo *getPosition = transformClass ?
+            p_il2cpp_class_get_method_from_name(transformClass, "get_position", 0) : NULL;
+        if (!getPosition) {
+            runtimeLog(@"transform position probe skipped: MethodInfo unresolved");
+            return;
+        }
+        exception = NULL;
+        Il2CppObject *boxedPosition = p_il2cpp_runtime_invoke(getPosition, transform, NULL, &exception);
+        runtimeLog([NSString stringWithFormat:@"transform position result boxed=0x%lx exception=0x%lx",
+            (uintptr_t)boxedPosition, (uintptr_t)exception]);
+        if (boxedPosition && !exception && p_il2cpp_object_unbox) {
+            Il2CppVector3 *position = (Il2CppVector3 *)p_il2cpp_object_unbox(boxedPosition);
+            if (position) {
+                runtimeLog([NSString stringWithFormat:@"transform position value x=%.5f y=%.5f z=%.5f",
+                    position->x, position->y, position->z]);
+            } else {
+                runtimeLog(@"transform position unbox returned null");
+            }
+        } else if (boxedPosition && !exception) {
+            runtimeLog(@"transform position value returned boxed Vector3; object_unbox unavailable");
+        }
         return;
     }
     runtimeLog(@"camera getter probe skipped: Camera class not found");
