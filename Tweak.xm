@@ -688,9 +688,13 @@ typedef void* (*il2cpp_image_get_class_t)(const void* image, size_t index);
 typedef const char* (*il2cpp_class_get_name_t)(void* klass);
 typedef const char* (*il2cpp_class_get_namespace_t)(void* klass);
 typedef void* (*il2cpp_class_from_name_t)(void* image, const char* ns, const char* name);
-typedef void* (*il2cpp_runtime_invoke_t)(void* method, void* obj, void** params, void** exc);
-typedef struct { void* methodPointer; } Il2CppMethodInfo;
-typedef Il2CppMethodInfo* (*il2cpp_class_get_method_from_name_t)(void* klass, const char* name, int args);
+/* Keep IL2CPP runtime types opaque.  A MethodInfo layout is version-specific;
+ * runtime_invoke must receive the pointer returned by the exported resolver. */
+typedef struct Il2CppMethodInfo Il2CppMethodInfo;
+typedef struct Il2CppObject Il2CppObject;
+typedef struct Il2CppException Il2CppException;
+typedef Il2CppObject* (*il2cpp_runtime_invoke_t)(const Il2CppMethodInfo *method, void* obj, void** params, Il2CppException** exc);
+typedef const Il2CppMethodInfo* (*il2cpp_class_get_method_from_name_t)(void* klass, const char* name, int args);
 
 static void probeCandidateMethods(void *klass, const char *imageName, const char *classNs, const char *className);
 static BOOL isReadableExecutablePointer(void *ptr);
@@ -713,8 +717,7 @@ bool initIl2CppAPI(void) {
         p_il2cpp_assembly_get_image && p_il2cpp_image_get_name &&
         p_il2cpp_image_get_class_count && p_il2cpp_image_get_class &&
         p_il2cpp_class_get_name && p_il2cpp_class_get_namespace &&
-        p_il2cpp_class_from_name && p_il2cpp_class_get_method_from_name &&
-        p_il2cpp_runtime_invoke)
+        p_il2cpp_class_from_name && p_il2cpp_class_get_method_from_name)
         return true;
 
     p_il2cpp_domain_get = (il2cpp_domain_get_t)dlsym(RTLD_DEFAULT, "il2cpp_domain_get");
@@ -734,8 +737,7 @@ bool initIl2CppAPI(void) {
         !p_il2cpp_assembly_get_image || !p_il2cpp_image_get_name ||
         !p_il2cpp_image_get_class_count || !p_il2cpp_image_get_class ||
         !p_il2cpp_class_get_name || !p_il2cpp_class_get_namespace ||
-        !p_il2cpp_class_from_name || !p_il2cpp_class_get_method_from_name ||
-        !p_il2cpp_runtime_invoke) {
+        !p_il2cpp_class_from_name || !p_il2cpp_class_get_method_from_name) {
         runtimeLog([NSString stringWithFormat:@"il2cpp API incomplete domain=%d assemblies=%d image=%d name=%d filename=%d classCount=%d classAt=%d className=%d classNs=%d class=%d method=%d",
             p_il2cpp_domain_get != NULL, p_il2cpp_domain_get_assemblies != NULL,
             p_il2cpp_assembly_get_image != NULL, p_il2cpp_image_get_name != NULL,
@@ -745,7 +747,8 @@ bool initIl2CppAPI(void) {
             p_il2cpp_class_from_name != NULL, p_il2cpp_class_get_method_from_name != NULL]);
         return false;
     }
-    runtimeLog(@"il2cpp API resolved via dlsym");
+    runtimeLog([NSString stringWithFormat:@"il2cpp API resolved via dlsym runtime_invoke=%d",
+        p_il2cpp_runtime_invoke != NULL]);
     return true;
 }
 
@@ -821,14 +824,11 @@ static void probeCandidateMethods(void *klass, const char *imageName, const char
     };
     for (NSUInteger i = 0; i < sizeof(methods) / sizeof(methods[0]); i++) {
         for (int args = 0; args <= 3; args++) {
-            Il2CppMethodInfo *method = p_il2cpp_class_get_method_from_name(klass, methods[i], args);
-            if (method && method->methodPointer) {
-                BOOL plausible = isReadableExecutablePointer(method->methodPointer);
-                runtimeLog([NSString stringWithFormat:@"il2cpp candidate image=%s ns=%s class=%s method=%s args=%d ptr=0x%lx",
+            const Il2CppMethodInfo *method = p_il2cpp_class_get_method_from_name(klass, methods[i], args);
+            if (method) {
+                runtimeLog([NSString stringWithFormat:@"il2cpp candidate image=%s ns=%s class=%s method=%s args=%d MethodInfo=0x%lx",
                     imageName ?: "", classNs ?: "", className, methods[i], args,
-                    (uintptr_t)method->methodPointer]);
-                runtimeLog([NSString stringWithFormat:@"il2cpp candidate pointer_check=%@",
-                    plausible ? @"PASS" : @"UNRESOLVED"]);
+                    (uintptr_t)method]);
                 break;
             }
         }
@@ -844,11 +844,11 @@ static BOOL isReadableExecutablePointer(void *ptr) {
 }
 
 static void probeMainCameraGetter(void) {
-    // Disabled: p_il2cpp_runtime_invoke requires MethodInfo*, not methodPointer.
-    runtimeLog(@"camera getter probe disabled: MethodInfo ABI unresolved");
-    return;
-    /*
     if (!initIl2CppAPI()) return;
+    if (!p_il2cpp_runtime_invoke) {
+        runtimeLog(@"camera getter probe skipped: il2cpp_runtime_invoke unavailable");
+        return;
+    }
     void *domain = p_il2cpp_domain_get();
     size_t count = 0;
     const void **assemblies = domain ? p_il2cpp_domain_get_assemblies(domain, &count) : NULL;
@@ -861,19 +861,18 @@ static void probeMainCameraGetter(void) {
         const char *imageName = image ? p_il2cpp_image_get_name(image) : NULL;
         if (!imageName || strcmp(imageName, "UnityEngine.CoreModule.dll") != 0) continue;
         void *klass = p_il2cpp_class_from_name(image, "UnityEngine", "Camera");
-        Il2CppMethodInfo *method = klass ? p_il2cpp_class_get_method_from_name(klass, "get_main", 0) : NULL;
-        if (!method || !isReadableExecutablePointer(method->methodPointer)) {
-            runtimeLog(@"camera getter probe skipped: method pointer unresolved");
+        const Il2CppMethodInfo *method = klass ? p_il2cpp_class_get_method_from_name(klass, "get_main", 0) : NULL;
+        if (!method) {
+            runtimeLog(@"camera getter probe skipped: MethodInfo unresolved");
             return;
         }
-        void *exception = NULL;
-        void *camera = p_il2cpp_runtime_invoke(method->methodPointer, NULL, NULL, &exception);
+        Il2CppException *exception = NULL;
+        Il2CppObject *camera = p_il2cpp_runtime_invoke(method, NULL, NULL, &exception);
         runtimeLog([NSString stringWithFormat:@"camera getter result camera=0x%lx exception=0x%lx",
             (uintptr_t)camera, (uintptr_t)exception]);
         return;
     }
     runtimeLog(@"camera getter probe skipped: Camera class not found");
-    */
 }
 
 static void enumerateIl2CppAssemblies(void) {
@@ -902,7 +901,7 @@ static void enumerateIl2CppAssemblies(void) {
     }
 }
 
-static void* resolveIl2CppMethod(const char* ns, const char* klassName, const char* methodName, int args) {
+static const Il2CppMethodInfo* resolveIl2CppMethod(const char* ns, const char* klassName, const char* methodName, int args) {
     if (!initIl2CppAPI()) return NULL;
 
     void* klass = p_il2cpp_class_from_name(NULL, ns, klassName);
@@ -912,17 +911,18 @@ static void* resolveIl2CppMethod(const char* ns, const char* klassName, const ch
         return NULL;
     }
 
-    Il2CppMethodInfo* method = p_il2cpp_class_get_method_from_name(klass, methodName, args);
-    if (!method || !method->methodPointer) {
+    const Il2CppMethodInfo* method = p_il2cpp_class_get_method_from_name(klass, methodName, args);
+    if (!method) {
         NSLog(@"[GameHack] method not found: %s.%s$$%s", ns, klassName, methodName);
         runtimeLog([NSString stringWithFormat:@"method unresolved %s.%s::%s args=%d", ns, klassName, methodName, args]);
         return NULL;
     }
 
-    NSLog(@"[GameHack] resolved %s.%s$$%s @ 0x%lx",
-          ns, klassName, methodName, (uintptr_t)method->methodPointer);
-    runtimeLog([NSString stringWithFormat:@"method resolved %s.%s::%s @0x%lx", ns, klassName, methodName, (uintptr_t)method->methodPointer]);
-    return method->methodPointer;
+    NSLog(@"[GameHack] resolved %s.%s$$%s MethodInfo @ 0x%lx",
+          ns, klassName, methodName, (uintptr_t)method);
+    runtimeLog([NSString stringWithFormat:@"method resolved %s.%s::%s MethodInfo=0x%lx",
+        ns, klassName, methodName, (uintptr_t)method]);
+    return method;
 }
 
 %ctor {
@@ -939,6 +939,7 @@ static void* resolveIl2CppMethod(const char* ns, const char* klassName, const ch
         runtimeLog([NSString stringWithFormat:@"UnityFramework base=0x%lx", unityBase]);
         enumerateIl2CppAssemblies();
         enumerateTargetClasses();
+        probeMainCameraGetter();
         // Hooks installed on-demand by button press (not at startup)
         showHUD();
     });
