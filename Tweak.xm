@@ -915,6 +915,26 @@ static void probeEntityManagers(void) {
     }
 }
 
+static void scheduleEntityManagerSampling(void) {
+    __block int sample = 0;
+    void (^sampleBlock)(void) = nil;
+    sampleBlock = ^{
+        if (sample >= 8) {
+            runtimeLog(@"entity manager sampling finished");
+            return;
+        }
+        sample++;
+        runtimeLog([NSString stringWithFormat:@"entity manager sample=%d", sample]);
+        probeEntityManagers();
+        if (sample < 8) {
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC),
+                dispatch_get_main_queue(), sampleBlock);
+        }
+    };
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC),
+        dispatch_get_main_queue(), sampleBlock);
+}
+
 static void probeMainCameraGetter(void) {
     if (!initIl2CppAPI()) return;
     if (!p_il2cpp_runtime_invoke) {
@@ -1058,7 +1078,7 @@ static const Il2CppMethodInfo* resolveIl2CppMethod(const char* ns, const char* k
         enumerateIl2CppAssemblies();
         enumerateTargetClasses();
         probeMainCameraGetter();
-        probeEntityManagers();
+        scheduleEntityManagerSampling();
         // Hooks installed on-demand by button press (not at startup)
         showHUD();
     });
