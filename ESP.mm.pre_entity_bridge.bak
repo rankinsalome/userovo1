@@ -121,8 +121,8 @@ void espAppendEntitySnapshot(float x, float y, float z,
                              const char *className, const char *namespaceName) {
     if (g_pendingEntCnt >= 64) return;
     EEnt *e = &g_pendingEnts[g_pendingEntCnt++];
-    e->pos = Vec3{x, y, z};
-    e->screen = Vec3{sx, sy, sz};
+    e->pos = (Vec3){x, y, z};
+    e->screen = (Vec3){sx, sy, sz};
     e->screenValid = isfinite(sx) && isfinite(sy) && sx >= 0.0f && sy >= 0.0f;
     e->ok = e->screenValid;
     e->team = 0;
@@ -250,9 +250,6 @@ static EspView *g_espView = nil;
         CGContextFillRect(c,CGRectMake(sp.x-bw/2,sp.y-cr-10,bw*hf,bh));
         NSString *label = [NSString stringWithUTF8String:e->className];
         if (label.length == 0) label = @"Object";
-        NSString *ns = [NSString stringWithUTF8String:e->namespaceName];
-        if (ns.length > 0 && ![label hasPrefix:[ns stringByAppendingString:@"."]])
-            label = [NSString stringWithFormat:@"%@.%@", ns, label];
         NSDictionary *attrs = @{ NSFontAttributeName: [UIFont systemFontOfSize:10 weight:UIFontWeightMedium],
                                  NSForegroundColorAttributeName: UIColor.whiteColor };
         [label drawAtPoint:CGPointMake(sp.x + cr + 3, sp.y - 7) withAttributes:attrs];

@@ -1110,12 +1110,6 @@ static void probeEntityObjects(void *gameCoreImage) {
                                         screenOK ? (float)screenHeight - screen.y : -1.0f,
                                         screen.z, className, namespaceName);
                 actorValid++;
-                if (actorValid <= 16) {
-                    runtimeLog([NSString stringWithFormat:@"actor object source=%s index=%d ptr=0x%lx class=%s ns=%s world=(%.2f,%.2f,%.2f) screen=%s",
-                                actorSources[sourceIndex].itemName, index, (uintptr_t)actor,
-                                className[0] ? className : "unknown", namespaceName[0] ? namespaceName : "",
-                                world.x, world.y, world.z, screenOK ? "ok" : "unresolved"]);
-                }
             }
         }
     }
