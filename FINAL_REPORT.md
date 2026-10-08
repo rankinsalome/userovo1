@@ -17,21 +17,22 @@
 
 ## 当前代码策略
 
-- 显示缓存字段只按 dump 已确认的 `actorID=0x08`、`position=0x18` 解析，stride 仅保留对齐候选 `0x40/0x48/0x3C`。
-- 候选布局评分不足时拒绝缓存，不覆盖对象原始位置，避免错误坐标污染普通模式。
+- 显示缓存字段固定按 dump 已确认的 `actorID=0x08`、`position=0x18`、`DisplayInfoData` stride `0x3C` 解析，不再运行时猜 stride。
+- `SGW.GetDisplayData()` / `GetDisplayData_Count()` 改为调用 dump 中的静态 RVA `0x159EBF4` / `0x159ED30`；移除了会把 `runtime_invoke` 返回值误解为 native 数组指针的路径。
+- native 返回地址和每条记录都经过可读性、actorID、坐标有效性检查；失败时不覆盖对象原始位置，避免错误坐标污染普通模式。
 - 只有 `actorID` 精确匹配时，显示缓存坐标才会替代 `ActorLinker` 位置。
 - 调试模式可继续绘制已成功解析的缓存记录，用于确认小野怪和视野外对象是否存在于缓存。
 
 ## 未确认
 
 - 当前环境尚未重新编译运行，因此不能声称小野怪已经最终修复。
-- 尚未确认 `SGW.GetDisplayData()` 的 `runtime_invoke` 返回值是否是可直接解包的 native pointer。
-- 尚未确认显示缓存 native stride；不得据此推导新的地址或 Offset。
+- 尚未在目标设备确认 `SGW` 两个静态 RVA 与当前二进制完全一致；这一步必须通过新日志中的 `display cache native resolved` 和 `valid` 完成验证。
+- 尚未确认所有小野怪都进入 SGW display cache；若 `BuffMonster` 仍只有分类对象而没有对应 actorID，需要继续沿 `GetDebugMovementData(actorID, callback)` 做按对象补充。
 
 ## 下一次运行应只观察
 
-1. `display cache layout=...` 是否出现，及其 `valid` 是否大于 0。
-2. `actor supplemental itemType source=...` 是否出现 `BuffMonster` 对象。
+1. `display cache native resolved ... stride=0x3c` 是否出现。
+2. `display cache sample count=... valid=...` 的 `valid` 是否大于 0。
 3. `actor snapshot50 composition` 是否出现 `BuffMonster[...]`。
-4. 实体离开视野后，`display cache sample` 中对应 actorID 的位置是否继续变化。
+4. 实体离开视野后，匹配 actorID 的 display-cache 坐标是否继续变化。
 
