@@ -787,6 +787,27 @@ static void enumerateTargetClasses(void) {
             if (className && classNameMatches(className)) {
                 runtimeLog([NSString stringWithFormat:@"il2cpp class image=%s ns=%s name=%s",
                     imageName ?: "", classNs ?: "", className]);
+                probeCandidateMethods(klass, imageName, classNs, className);
+            }
+        }
+    }
+}
+
+static void probeCandidateMethods(void *klass, const char *imageName, const char *classNs, const char *className) {
+    if (!klass || !className) return;
+    static const char *methods[] = {
+        "get_main", "get_camera", "GetCamera", "get_instance", "Instance",
+        "get_transform", "get_position", "GetPosition", "GetActor",
+        "GetActors", "GetPlayer", "GetPlayers", "get_world", "GetWorld"
+    };
+    for (NSUInteger i = 0; i < sizeof(methods) / sizeof(methods[0]); i++) {
+        for (int args = 0; args <= 3; args++) {
+            Il2CppMethodInfo *method = p_il2cpp_class_get_method_from_name(klass, methods[i], args);
+            if (method && method->methodPointer) {
+                runtimeLog([NSString stringWithFormat:@"il2cpp candidate image=%s ns=%s class=%s method=%s args=%d ptr=0x%lx",
+                    imageName ?: "", classNs ?: "", className, methods[i], args,
+                    (uintptr_t)method->methodPointer]);
+                break;
             }
         }
     }
