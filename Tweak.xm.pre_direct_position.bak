@@ -954,77 +954,31 @@ static BOOL readObjectClassName(Il2CppObject *object, char *name, size_t nameCap
     return cn != NULL;
 }
 
-static BOOL g_loggedDirectPositionSource = NO;
-static BOOL g_loggedDirectPositionFailure = NO;
-static BOOL g_loggedMyTransformSource = NO;
-static BOOL g_loggedTransformPositionSource = NO;
-
-static BOOL isFiniteVector3(Il2CppVector3 value) {
-    return isfinite(value.x) && isfinite(value.y) && isfinite(value.z);
-}
-
-static BOOL decodeBoxedVector3(Il2CppObject *boxed, Il2CppException *exception,
-                               Il2CppVector3 *outPosition) {
-    if (!boxed || exception || !outPosition || !p_il2cpp_object_unbox) return NO;
-    void *raw = p_il2cpp_object_unbox(boxed);
-    if (!raw) return NO;
-    Il2CppVector3 value = *(Il2CppVector3 *)raw;
-    if (!isFiniteVector3(value)) return NO;
-    *outPosition = value;
-    return YES;
-}
-
-static BOOL tryActorLogicalPosition(Il2CppObject *object, void *objectClass,
-                                    Il2CppVector3 *outPosition) {
-    if (!object || !outPosition) return NO;
-
-    /* ActorLinker implements IActorLinker.Position. This is the gameplay
-       position and is independent of renderer/culling updates. */
-    const Il2CppMethodInfo *method = resolveMethod(objectClass, "get_Position", 0);
-    if (!method) {
-        void *baseImage = findIl2CppImageNamed("Scripts.Base.dll");
-        void *actorInterface = baseImage && p_il2cpp_class_from_name
-            ? p_il2cpp_class_from_name(baseImage, "Assets.Scripts.GameLogic", "IActorLinker")
-            : NULL;
-        method = resolveMethod(actorInterface, "get_Position", 0);
-    }
-    if (!method) return NO;
-
-    Il2CppException *exception = NULL;
-    Il2CppObject *boxed = invokeMethod(method, object, NULL, &exception);
-    if (decodeBoxedVector3(boxed, exception, outPosition)) {
-        if (!g_loggedDirectPositionSource) {
-            g_loggedDirectPositionSource = YES;
-            runtimeLog([NSString stringWithFormat:
-                @"position source=direct classPtr=0x%lx world=(%.2f,%.2f,%.2f)",
-                (uintptr_t)objectClass, outPosition->x, outPosition->y, outPosition->z]);
-        }
-        return YES;
-    }
-    if (!g_loggedDirectPositionFailure) {
-        g_loggedDirectPositionFailure = YES;
-        runtimeLog([NSString stringWithFormat:
-            @"position source=direct failed method=0x%lx exception=0x%lx boxed=0x%lx",
-            (uintptr_t)method, (uintptr_t)exception, (uintptr_t)boxed]);
-    }
-    return NO;
-}
-
-static BOOL tryTransformPosition(Il2CppObject *object, void *objectClass,
-                                 Il2CppVector3 *outPosition) {
-    if (!object || !outPosition || !p_il2cpp_object_get_class) return NO;
-
-    const Il2CppMethodInfo *getTransform = resolveMethod(objectClass, "get_MyTransform", 0);
-    BOOL usedMyTransform = getTransform != NULL;
-    if (!getTransform) getTransform = resolveMethod(objectClass, "get_transform", 0);
+static BOOL readObjectPosition(Il2CppObject *object, Il2CppVector3 *outPosition) {
+    if (!object || !outPosition || !p_il2cpp_object_get_class || !p_il2cpp_object_unbox) return NO;
+    void *objectClass = p_il2cpp_object_get_class(object);
+    const Il2CppMethodInfo *getTransform = resolveMethod(objectClass, "get_transform", 0);
     if (!getTransform) {
+        const Il2CppMethodInfo *getDirectPosition = resolveMethod(objectClass, "get_Position", 0);
+        if (!getDirectPosition) {
+            void *baseImage = findIl2CppImageNamed("Scripts.Base.dll");
+            void *actorInterface = baseImage ? p_il2cpp_class_from_name(baseImage, "Assets.Scripts.GameLogic", "IActorLinker") : NULL;
+            getDirectPosition = resolveMethod(actorInterface, "get_Position", 0);
+        }
+        if (getDirectPosition) {
+            Il2CppException *directException = NULL;
+            Il2CppObject *boxedDirect = invokeMethod(getDirectPosition, object, NULL, &directException);
+            void *directRaw = (!directException && boxedDirect) ? p_il2cpp_object_unbox(boxedDirect) : NULL;
+            if (directRaw) {
+                *outPosition = *(Il2CppVector3 *)directRaw;
+                return isfinite(outPosition->x) && isfinite(outPosition->y) && isfinite(outPosition->z);
+            }
+        }
         void *coreImage = findIl2CppImageNamed("UnityEngine.CoreModule.dll");
-        void *componentClass = coreImage && p_il2cpp_class_from_name
-            ? p_il2cpp_class_from_name(coreImage, "UnityEngine", "Component") : NULL;
+        void *componentClass = coreImage ? p_il2cpp_class_from_name(coreImage, "UnityEngine", "Component") : NULL;
         getTransform = resolveMethod(componentClass, "get_transform", 0);
     }
     if (!getTransform) return NO;
-
     Il2CppException *exception = NULL;
     Il2CppObject *transform = invokeMethod(getTransform, object, NULL, &exception);
     if (!transform || exception) return NO;
@@ -1032,36 +986,17 @@ static BOOL tryTransformPosition(Il2CppObject *object, void *objectClass,
     const Il2CppMethodInfo *getPosition = resolveMethod(transformClass, "get_position", 0);
     if (!getPosition) {
         void *coreImage = findIl2CppImageNamed("UnityEngine.CoreModule.dll");
-        void *transformType = coreImage && p_il2cpp_class_from_name
-            ? p_il2cpp_class_from_name(coreImage, "UnityEngine", "Transform") : NULL;
+        void *transformType = coreImage ? p_il2cpp_class_from_name(coreImage, "UnityEngine", "Transform") : NULL;
         getPosition = resolveMethod(transformType, "get_position", 0);
     }
     if (!getPosition) return NO;
-
     exception = NULL;
     Il2CppObject *boxed = invokeMethod(getPosition, transform, NULL, &exception);
-    if (!decodeBoxedVector3(boxed, exception, outPosition)) return NO;
-    if (usedMyTransform) {
-        if (!g_loggedMyTransformSource) {
-            g_loggedMyTransformSource = YES;
-            runtimeLog([NSString stringWithFormat:
-                @"position source=myTransform classPtr=0x%lx world=(%.2f,%.2f,%.2f)",
-                (uintptr_t)objectClass, outPosition->x, outPosition->y, outPosition->z]);
-        }
-    } else if (!g_loggedTransformPositionSource) {
-        g_loggedTransformPositionSource = YES;
-        runtimeLog([NSString stringWithFormat:
-            @"position source=transformFallback classPtr=0x%lx world=(%.2f,%.2f,%.2f)",
-            (uintptr_t)objectClass, outPosition->x, outPosition->y, outPosition->z]);
-    }
-    return YES;
-}
-
-static BOOL readObjectPosition(Il2CppObject *object, Il2CppVector3 *outPosition) {
-    if (!object || !outPosition || !p_il2cpp_object_get_class || !p_il2cpp_object_unbox) return NO;
-    void *objectClass = p_il2cpp_object_get_class(object);
-    if (tryActorLogicalPosition(object, objectClass, outPosition)) return YES;
-    return tryTransformPosition(object, objectClass, outPosition);
+    if (!boxed || exception) return NO;
+    void *raw = p_il2cpp_object_unbox(boxed);
+    if (!raw) return NO;
+    *outPosition = *(Il2CppVector3 *)raw;
+    return isfinite(outPosition->x) && isfinite(outPosition->y) && isfinite(outPosition->z);
 }
 
 static Il2CppObject *g_projectionCamera = NULL;
