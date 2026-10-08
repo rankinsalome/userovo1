@@ -1137,7 +1137,7 @@ static BOOL resolveSGWDisplayNative(void) {
     g_sgwGetDisplayCountNative = (sgw_get_display_count_native_t)countAddress;
     g_sgwNativeResolved = YES;
     runtimeLog([NSString stringWithFormat:
-        @"display cache native resolved data=0x%lx count=0x%lx stride=0x34 actor=0x00 position=0x10",
+        @"display cache native resolved data=0x%lx count=0x%lx stride=0x3c actor=0x08 position=0x18",
         dataAddress, countAddress]);
     return YES;
 }
@@ -1159,13 +1159,12 @@ static BOOL readDisplayCache(RuntimeDisplayRecord *records, int capacity, int *o
         return NO;
     }
 
-    /* Value-type field offsets in dump.cs include the value-type metadata
-       base (Vector3.x is shown as 0x08).  The native DisplayInfoData record
-       therefore starts at actorID=0x00, position=0x10 and is 0x34 bytes:
-       UInt32 + VInt3 + Vector3 + Int32 + Quaternion + UInt32. */
-    const size_t actorOffset = 0x00;
-    const size_t positionOffset = 0x10;
-    const size_t stride = 0x34;
+    /* DisplayInfoData is a 0x3c-byte value type in the dump.  Do not infer
+       another stride from transient bytes: a wrong stride creates plausible
+       looking but unrelated coordinates and reintroduces frozen markers. */
+    const size_t actorOffset = 0x08;
+    const size_t positionOffset = 0x18;
+    const size_t stride = 0x3C;
     int actualCount = (int)MIN(countValue, (uint32_t)capacity);
     int valid = 0;
     for (int i = 0; i < actualCount; i++) {
@@ -1182,7 +1181,7 @@ static BOOL readDisplayCache(RuntimeDisplayRecord *records, int capacity, int *o
     if (g_lastDisplayCacheLog <= 0.0 || now - g_lastDisplayCacheLog >= 5.0) {
         g_lastDisplayCacheLog = now;
         runtimeLog([NSString stringWithFormat:
-            @"display cache sample count=%u valid=%d stride=0x34 data=0x%lx",
+            @"display cache sample count=%u valid=%d stride=0x3c data=0x%lx",
             countValue, valid, dataAddress]);
         char sample[640] = {0};
         size_t used = 0;
@@ -1662,36 +1661,6 @@ static BOOL appendActorPositionSnapshot(const ActorPositionRef50 *ref,
     return YES;
 }
 
-static BOOL displayIDBelongsToActorRefs(const ActorPositionRef50 *refs, int refCount,
-                                        uint32_t actorID) {
-    if (!refs || refCount <= 0 || actorID == 0) return NO;
-    for (int i = 0; i < refCount; i++) {
-        if (refs[i].actorID == actorID) return YES;
-    }
-    return NO;
-}
-
-static int appendUnmatchedDisplayCacheSnapshot(const RuntimeDisplayRecord *records, int count,
-                                               const ActorPositionRef50 *refs, int refCount,
-                                               int capacity) {
-    if (!records || count <= 0 || capacity <= 0) return 0;
-    int valid = 0;
-    for (int i = 0; i < count && valid < capacity; i++) {
-        if (displayIDBelongsToActorRefs(refs, refCount, records[i].actorID)) continue;
-        Il2CppVector3 screen = {-1, -1, -1};
-        if (!isUsableActorWorld(records[i].position) ||
-            !projectWorldPosition(records[i].position, &screen) ||
-            !isUsableActorScreen(screen)) continue;
-        char label[96] = {0};
-        snprintf(label, sizeof(label), "Display[%u]", records[i].actorID);
-        espAppendEntitySnapshot(records[i].position.x, records[i].position.y,
-                                records[i].position.z, screen.x, screen.y, screen.z,
-                                label, "SGW");
-        valid++;
-    }
-    return valid;
-}
-
 static void refreshActorSnapshotPositions(void) {
     if (!g_singleHeroSuccess || g_actorPositionRefCount50 <= 0) return;
     if (!prepareProjectionContext()) return;
@@ -1716,18 +1685,14 @@ static void refreshActorSnapshotPositions(void) {
     espBeginEntitySnapshot();
     int valid = 0;
     int limit = g_espDebugMode ? 512 : 50;
-    /* ActorManager objects are the named gameplay source.  Refresh them in
-       both modes; debug mode then adds display-cache records that have no
-       matching ActorLinker, instead of replacing the complete actor list. */
-    for (int i = 0; i < g_actorPositionRefCount50 && valid < limit; i++) {
-        if (appendActorPositionSnapshot(&g_actorPositionRefs50[i], displayRecords,
-                                        displayCount)) valid++;
+    if (g_espDebugMode && displayCount > 0) {
+        valid = appendDisplayCacheSnapshot(displayRecords, displayCount, limit);
     }
-    if (g_espDebugMode && displayCount > 0 && valid < limit) {
-        valid += appendUnmatchedDisplayCacheSnapshot(displayRecords, displayCount,
-                                                     g_actorPositionRefs50,
-                                                     g_actorPositionRefCount50,
-                                                     limit - valid);
+    if (!g_espDebugMode || valid == 0) {
+        for (int i = 0; i < g_actorPositionRefCount50 && valid < limit; i++) {
+            if (appendActorPositionSnapshot(&g_actorPositionRefs50[i], displayRecords,
+                                            displayCount)) valid++;
+        }
     }
     espCommitEntitySnapshot();
     g_positionRefreshValid50 = valid;
@@ -1840,14 +1805,14 @@ static int appendSupplementalActorList(void *actorClass, Il2CppObject *actorMana
 
 static void probeActorSnapshot50(void *actorClass, Il2CppObject *actorManager) {
     static const char *countNames[] = {
-        "GetHeroActorCount", "GetOrganActorCount", "GetBuffMonsterCount",
-        "GetDragonActorCount", "GetSoldierActorCount"
+        "GetHeroActorCount", "GetOrganActorCount", "GetSoldierActorCount",
+        "GetBuffMonsterCount", "GetDragonActorCount"
     };
     static const char *itemNames[] = {
-        "GetHeroActorByIndex", "GetOrganActorByIndex", "GetBuffMonsterByIndex",
-        "GetDragonActorByIndex", "GetSoldierActorByIndex"
+        "GetHeroActorByIndex", "GetOrganActorByIndex", "GetSoldierActorByIndex",
+        "GetBuffMonsterByIndex", "GetDragonActorByIndex"
     };
-    static const char *sourceNames[] = { "Hero", "Organ", "BuffMonster", "Dragon", "Soldier" };
+    static const char *sourceNames[] = { "Hero", "Organ", "Soldier", "BuffMonster", "Dragon" };
     g_actorSnapshot50Valid = 0;
     g_actorPositionRefCount50 = 0;
     memset(g_actorPositionRefs50, 0, sizeof(g_actorPositionRefs50));
@@ -1866,7 +1831,7 @@ static void probeActorSnapshot50(void *actorClass, Il2CppObject *actorManager) {
     int displayCount = 0;
     readDisplayCache(displayRecords, 512, &displayCount);
     espBeginEntitySnapshot();
-    char signature[4096] = {0};
+    char signature[512] = {0};
     size_t signatureUsed = 0;
     char geometry[1024] = {0};
     size_t geometryUsed = 0;
@@ -1879,16 +1844,12 @@ static void probeActorSnapshot50(void *actorClass, Il2CppObject *actorManager) {
         int sourceCount = readBoxedIntResult(countMethod, actorManager, NULL, &countOK);
         if (!countOK || sourceCount <= 0) continue;
         if (sourceCount > 64) sourceCount = 64;
-        int sourceObjects = 0;
-        int sourcePositionOK = 0;
-        int sourceScreenOK = 0;
         for (int index = 0; index < sourceCount && g_actorSnapshot50Valid < snapshotLimit; index++) {
             int32_t indexValue = index;
             void *params[1] = { &indexValue };
             Il2CppException *exception = NULL;
             Il2CppObject *actor = invokeMethod(itemMethod, actorManager, params, &exception);
             if (!actor || exception) continue;
-            sourceObjects++;
 
             char className[96] = {0};
             char namespaceName[96] = {0};
@@ -1898,11 +1859,9 @@ static void probeActorSnapshot50(void *actorClass, Il2CppObject *actorManager) {
             readUInt32Field(actor, 0x4AC, &actorID);
             BOOL positionOK = actorID && findDisplayPosition(displayRecords, displayCount, actorID, &world);
             if (!positionOK) positionOK = readObjectPosition(actor, &world);
-            if (positionOK) sourcePositionOK++;
             if (!positionOK || !isUsableActorWorld(world)) continue;
             Il2CppVector3 screen = {-1, -1, -1};
             BOOL screenOK = projectWorldPosition(world, &screen) && isUsableActorScreen(screen);
-            if (screenOK) sourceScreenOK++;
 
             char displayName[96] = {0};
             snprintf(displayName, sizeof(displayName), "%s[%d] %s", sourceNames[source], index,
@@ -1931,20 +1890,6 @@ static void probeActorSnapshot50(void *actorClass, Il2CppObject *actorManager) {
                                        sourceNames[source], index, world.x, world.y, world.z,
                                        screen.x, screen.y, screen.z);
                 if (written > 0) geometryUsed += (size_t)written;
-            }
-        }
-        if (source == 2) {
-            static int lastBuffObjects = -1;
-            static int lastBuffPositions = -1;
-            static int lastBuffScreens = -1;
-            if (sourceObjects != lastBuffObjects || sourcePositionOK != lastBuffPositions ||
-                sourceScreenOK != lastBuffScreens) {
-                lastBuffObjects = sourceObjects;
-                lastBuffPositions = sourcePositionOK;
-                lastBuffScreens = sourceScreenOK;
-                runtimeLog([NSString stringWithFormat:
-                    @"actor source=BuffMonster objects=%d positionOK=%d screenOK=%d limit=%d",
-                    sourceObjects, sourcePositionOK, sourceScreenOK, snapshotLimit]);
             }
         }
     }
