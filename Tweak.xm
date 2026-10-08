@@ -688,10 +688,11 @@ typedef void* (*il2cpp_image_get_class_t)(const void* image, size_t index);
 typedef const char* (*il2cpp_class_get_name_t)(void* klass);
 typedef const char* (*il2cpp_class_get_namespace_t)(void* klass);
 typedef void* (*il2cpp_class_from_name_t)(void* image, const char* ns, const char* name);
-typedef struct { void* methodPointer; uint8_t _pad[48]; } Il2CppMethodInfo;
+typedef struct { void* methodPointer; } Il2CppMethodInfo;
 typedef Il2CppMethodInfo* (*il2cpp_class_get_method_from_name_t)(void* klass, const char* name, int args);
 
 static void probeCandidateMethods(void *klass, const char *imageName, const char *classNs, const char *className);
+static BOOL isReadableExecutablePointer(void *ptr);
 
 il2cpp_domain_get_t p_il2cpp_domain_get = NULL;
 il2cpp_domain_get_assemblies_t p_il2cpp_domain_get_assemblies = NULL;
@@ -806,13 +807,24 @@ static void probeCandidateMethods(void *klass, const char *imageName, const char
         for (int args = 0; args <= 3; args++) {
             Il2CppMethodInfo *method = p_il2cpp_class_get_method_from_name(klass, methods[i], args);
             if (method && method->methodPointer) {
+                BOOL plausible = isReadableExecutablePointer(method->methodPointer);
                 runtimeLog([NSString stringWithFormat:@"il2cpp candidate image=%s ns=%s class=%s method=%s args=%d ptr=0x%lx",
                     imageName ?: "", classNs ?: "", className, methods[i], args,
                     (uintptr_t)method->methodPointer]);
+                runtimeLog([NSString stringWithFormat:@"il2cpp candidate pointer_check=%@",
+                    plausible ? @"PASS" : @"UNRESOLVED"]);
                 break;
             }
         }
     }
+}
+
+static BOOL isReadableExecutablePointer(void *ptr) {
+    uintptr_t p = (uintptr_t)ptr;
+    if (!p || (p & 0x3) != 0) return NO;
+    uintptr_t base = unityBase;
+    if (!base) return NO;
+    return p >= base && p < base + 0x30000000ULL;
 }
 
 static void enumerateIl2CppAssemblies(void) {
