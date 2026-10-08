@@ -1449,6 +1449,89 @@ static void refreshActorSnapshotPositions(void) {
     }
 }
 
+static void cacheActorPositionRef50(Il2CppObject *actor, const char *displayName,
+                                    const char *namespaceName) {
+    if (!actor) return;
+    for (int i = 0; i < g_actorPositionRefCount50; i++) {
+        if (g_actorPositionRefs50[i].object == actor) return;
+    }
+    if (g_actorPositionRefCount50 >= 64) return;
+    ActorPositionRef50 *ref = &g_actorPositionRefs50[g_actorPositionRefCount50++];
+    ref->object = actor;
+    if (displayName) strncpy(ref->displayName, displayName, sizeof(ref->displayName) - 1);
+    if (namespaceName) strncpy(ref->namespaceName, namespaceName, sizeof(ref->namespaceName) - 1);
+}
+
+static int appendSupplementalActorList(void *actorClass, Il2CppObject *actorManager,
+                                       const char *getterName, const char *sourceName,
+                                       int *valid, char *signature, size_t signatureCap,
+                                       size_t *signatureUsed) {
+    if (!actorClass || !actorManager || !getterName || !sourceName || !valid) return 0;
+    const Il2CppMethodInfo *getter = resolveMethod(actorClass, getterName, 0);
+    if (!getter) return 0;
+    Il2CppException *exception = NULL;
+    Il2CppObject *list = invokeMethod(getter, actorManager, NULL, &exception);
+    if (!list || exception || !p_il2cpp_object_get_class) return 0;
+    void *listClass = p_il2cpp_object_get_class(list);
+    const char *listClassName = (listClass && p_il2cpp_class_get_name)
+        ? p_il2cpp_class_get_name(listClass) : NULL;
+    const Il2CppMethodInfo *countMethod = resolveMethod(listClass, "get_Count", 0);
+    const Il2CppMethodInfo *itemMethod = resolveMethod(listClass, "get_Item", 1);
+    BOOL countOK = NO;
+    int count = readBoxedIntResult(countMethod, list, NULL, &countOK);
+    if (!countOK || count < 0 || count > 256) count = 0;
+    static int lastCounts[2] = { -1, -1 };
+    int slot = strcmp(sourceName, "CallMonster") == 0 ? 0 : 1;
+    if (lastCounts[slot] != count) {
+        lastCounts[slot] = count;
+        runtimeLog([NSString stringWithFormat:
+            @"actor supplemental source=%s listClass=%s count=%d countMethod=%d itemMethod=%d",
+            sourceName, listClassName ?: "unknown", count,
+            countMethod != NULL, itemMethod != NULL]);
+    }
+    if (!itemMethod || count <= 0) return 0;
+
+    int appended = 0;
+    static BOOL itemTypeLogged[2] = { NO, NO };
+    int itemTypeSlot = strcmp(sourceName, "CallMonster") == 0 ? 0 : 1;
+    for (int index = 0; index < count && *valid < 50; index++) {
+        int32_t indexValue = index;
+        void *params[1] = { &indexValue };
+        exception = NULL;
+        Il2CppObject *item = invokeMethod(itemMethod, list, params, &exception);
+        if (!item || exception) continue;
+        char className[96] = {0};
+        char namespaceName[96] = {0};
+        if (!readObjectClassName(item, className, sizeof(className),
+                                 namespaceName, sizeof(namespaceName))) continue;
+        if (!itemTypeLogged[itemTypeSlot]) {
+            itemTypeLogged[itemTypeSlot] = YES;
+            runtimeLog([NSString stringWithFormat:
+                @"actor supplemental itemType source=%s class=%s ns=%s",
+                sourceName, className[0] ? className : "unknown",
+                namespaceName[0] ? namespaceName : ""]);
+        }
+        if (strcmp(className, "ActorLinker") != 0) continue;
+        char displayName[128] = {0};
+        snprintf(displayName, sizeof(displayName), "%s[%d] %s", sourceName, index, className);
+        Il2CppVector3 world = {0, 0, 0};
+        if (!readObjectPosition(item, &world) || !isUsableActorWorld(world)) continue;
+        cacheActorPositionRef50(item, displayName, namespaceName);
+        Il2CppVector3 screen = {-1, -1, -1};
+        if (!projectWorldPosition(world, &screen) || !isUsableActorScreen(screen)) continue;
+        espAppendEntitySnapshot(world.x, world.y, world.z, screen.x, screen.y, screen.z,
+                                displayName, namespaceName);
+        (*valid)++;
+        appended++;
+        if (signature && signatureUsed && *signatureUsed + 48 < signatureCap) {
+            int written = snprintf(signature + *signatureUsed, signatureCap - *signatureUsed,
+                                   "%s[%d]=%s;", sourceName, index, className);
+            if (written > 0) *signatureUsed += (size_t)written;
+        }
+    }
+    return appended;
+}
+
 static void probeActorSnapshot50(void *actorClass, Il2CppObject *actorManager) {
     static const char *countNames[] = {
         "GetHeroActorCount", "GetOrganActorCount", "GetSoldierActorCount",
@@ -1529,6 +1612,20 @@ static void probeActorSnapshot50(void *actorClass, Il2CppObject *actorManager) {
                 if (written > 0) geometryUsed += (size_t)written;
             }
         }
+    }
+    int supplementalValid = 0;
+    supplementalValid += appendSupplementalActorList(actorClass, actorManager,
+                                                      "GetCallMonsterActors", "CallMonster",
+                                                      &g_actorSnapshot50Valid, signature,
+                                                      sizeof(signature), &signatureUsed);
+    supplementalValid += appendSupplementalActorList(actorClass, actorManager,
+                                                      "GetCallActors", "CallActor",
+                                                      &g_actorSnapshot50Valid, signature,
+                                                      sizeof(signature), &signatureUsed);
+    if (supplementalValid > 0) {
+        runtimeLog([NSString stringWithFormat:
+            @"actor supplemental appended=%d total=%d", supplementalValid,
+            g_actorSnapshot50Valid]);
     }
     espCommitEntitySnapshot();
 
