@@ -691,6 +691,8 @@ typedef void* (*il2cpp_class_from_name_t)(void* image, const char* ns, const cha
 typedef struct { void* methodPointer; uint8_t _pad[48]; } Il2CppMethodInfo;
 typedef Il2CppMethodInfo* (*il2cpp_class_get_method_from_name_t)(void* klass, const char* name, int args);
 
+static void probeCandidateMethods(void *klass, const char *imageName, const char *classNs, const char *className);
+
 il2cpp_domain_get_t p_il2cpp_domain_get = NULL;
 il2cpp_domain_get_assemblies_t p_il2cpp_domain_get_assemblies = NULL;
 il2cpp_assembly_get_image_t p_il2cpp_assembly_get_image = NULL;
@@ -731,7 +733,7 @@ bool initIl2CppAPI(void) {
         runtimeLog([NSString stringWithFormat:@"il2cpp API incomplete domain=%d assemblies=%d image=%d name=%d filename=%d classCount=%d classAt=%d className=%d classNs=%d class=%d method=%d",
             p_il2cpp_domain_get != NULL, p_il2cpp_domain_get_assemblies != NULL,
             p_il2cpp_assembly_get_image != NULL, p_il2cpp_image_get_name != NULL,
-            p_il2cpp_image_get_filename != NULL, p_il2cpp_class_from_name != NULL,
+            p_il2cpp_image_get_filename != NULL,
             p_il2cpp_image_get_class_count != NULL, p_il2cpp_image_get_class != NULL,
             p_il2cpp_class_get_name != NULL, p_il2cpp_class_get_namespace != NULL,
             p_il2cpp_class_from_name != NULL, p_il2cpp_class_get_method_from_name != NULL]);
