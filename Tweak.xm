@@ -915,24 +915,38 @@ static void probeEntityManagers(void) {
     }
 }
 
-static void scheduleEntityManagerSampling(void) {
-    __block int sample = 0;
-    void (^sampleBlock)(void) = nil;
-    sampleBlock = ^{
-        if (sample >= 8) {
-            runtimeLog(@"entity manager sampling finished");
-            return;
-        }
-        sample++;
-        runtimeLog([NSString stringWithFormat:@"entity manager sample=%d", sample]);
+static int g_entitySample = 0;
+static bool g_entitySampling = false;
+
+static void scheduleNextEntityManagerSample(void);
+
+static void runEntityManagerSample(void) {
+    if (g_entitySampling) return;
+    g_entitySampling = true;
+    int sample = ++g_entitySample;
+    runtimeLog([NSString stringWithFormat:@"entity manager sample=%d", sample]);
+    @try {
         probeEntityManagers();
-        if (sample < 8) {
-            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC),
-                dispatch_get_main_queue(), sampleBlock);
-        }
-    };
+    } @catch (NSException *exception) {
+        runtimeLog([NSString stringWithFormat:@"entity manager sample exception=%@",
+            exception.reason ?: @"unknown"]);
+    }
+    g_entitySampling = false;
+    if (g_entitySample < 8) scheduleNextEntityManagerSample();
+    else runtimeLog(@"entity manager sampling finished");
+}
+
+static void scheduleNextEntityManagerSample(void) {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC),
-        dispatch_get_main_queue(), sampleBlock);
+        dispatch_get_main_queue(), ^{
+            runEntityManagerSample();
+        });
+}
+
+static void scheduleEntityManagerSampling(void) {
+    g_entitySample = 0;
+    g_entitySampling = false;
+    scheduleNextEntityManagerSample();
 }
 
 static void probeMainCameraGetter(void) {
