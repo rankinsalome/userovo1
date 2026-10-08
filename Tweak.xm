@@ -770,6 +770,17 @@ static BOOL classNameMatches(const char *name) {
     return NO;
 }
 
+static BOOL isHighValueClass(const char *name) {
+    if (!name) return NO;
+    static const char *classes[] = {
+        "Camera", "CameraSystem", "ActorManager", "GamePlayerCenter",
+        "Player", "Transform"
+    };
+    for (NSUInteger i = 0; i < sizeof(classes) / sizeof(classes[0]); i++)
+        if (strcmp(name, classes[i]) == 0) return YES;
+    return NO;
+}
+
 static void enumerateTargetClasses(void) {
     if (!initIl2CppAPI()) return;
     void *domain = p_il2cpp_domain_get();
@@ -792,7 +803,7 @@ static void enumerateTargetClasses(void) {
             void *klass = p_il2cpp_image_get_class(image, ci);
             const char *className = klass ? p_il2cpp_class_get_name(klass) : NULL;
             const char *classNs = klass ? p_il2cpp_class_get_namespace(klass) : NULL;
-            if (className && classNameMatches(className)) {
+            if (className && (classNameMatches(className) && isHighValueClass(className))) {
                 runtimeLog([NSString stringWithFormat:@"il2cpp class image=%s ns=%s name=%s",
                     imageName ?: "", classNs ?: "", className]);
                 probeCandidateMethods(klass, imageName, classNs, className);
@@ -833,6 +844,10 @@ static BOOL isReadableExecutablePointer(void *ptr) {
 }
 
 static void probeMainCameraGetter(void) {
+    // Disabled: p_il2cpp_runtime_invoke requires MethodInfo*, not methodPointer.
+    runtimeLog(@"camera getter probe disabled: MethodInfo ABI unresolved");
+    return;
+    /*
     if (!initIl2CppAPI()) return;
     void *domain = p_il2cpp_domain_get();
     size_t count = 0;
@@ -858,6 +873,7 @@ static void probeMainCameraGetter(void) {
         return;
     }
     runtimeLog(@"camera getter probe skipped: Camera class not found");
+    */
 }
 
 static void enumerateIl2CppAssemblies(void) {
@@ -923,7 +939,6 @@ static void* resolveIl2CppMethod(const char* ns, const char* klassName, const ch
         runtimeLog([NSString stringWithFormat:@"UnityFramework base=0x%lx", unityBase]);
         enumerateIl2CppAssemblies();
         enumerateTargetClasses();
-        probeMainCameraGetter();
         // Hooks installed on-demand by button press (not at startup)
         showHUD();
     });
