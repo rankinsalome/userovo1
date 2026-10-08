@@ -1191,7 +1191,6 @@ static BOOL g_singleHeroFailureLogged = NO;
 static int g_lastHeroCategoryCounts[5] = { -2, -2, -2, -2, -2 };
 static int g_actorSnapshot50Valid = 0;
 static NSString *g_actorSnapshot50Signature = nil;
-static NSTimeInterval g_lastActorGeometryLog = 0.0;
 static float g_lastUnityViewportWidth = 0.0f;
 static float g_lastUnityViewportHeight = 0.0f;
 
@@ -1406,8 +1405,6 @@ static void probeActorSnapshot50(void *actorClass, Il2CppObject *actorManager) {
     espBeginEntitySnapshot();
     char signature[512] = {0};
     size_t signatureUsed = 0;
-    char geometry[1024] = {0};
-    size_t geometryUsed = 0;
     for (NSUInteger source = 0; source < 5 && g_actorSnapshot50Valid < 50; source++) {
         const Il2CppMethodInfo *countMethod = resolveMethod(actorClass, countNames[source], 0);
         const Il2CppMethodInfo *itemMethod = resolveMethod(actorClass, itemNames[source], 1);
@@ -1445,13 +1442,6 @@ static void probeActorSnapshot50(void *actorClass, Il2CppObject *actorManager) {
                                        className[0] ? className : "Actor");
                 if (written > 0) signatureUsed += (size_t)written;
             }
-            if (g_actorSnapshot50Valid <= 3 && geometryUsed + 220 < sizeof(geometry)) {
-                int written = snprintf(geometry + geometryUsed, sizeof(geometry) - geometryUsed,
-                                       "%s[%d] world=(%.2f,%.2f,%.2f) unityScreen=(%.1f,%.1f,%.2f);",
-                                       sourceNames[source], index, world.x, world.y, world.z,
-                                       screen.x, screen.y, screen.z);
-                if (written > 0) geometryUsed += (size_t)written;
-            }
         }
     }
     espCommitEntitySnapshot();
@@ -1462,11 +1452,6 @@ static void probeActorSnapshot50(void *actorClass, Il2CppObject *actorManager) {
         runtimeLog([NSString stringWithFormat:
             @"actor snapshot50 drawn=%d composition=%@", g_actorSnapshot50Valid,
             currentSignature.length ? currentSignature : @"empty"]);
-    }
-    NSTimeInterval now = [[NSDate date] timeIntervalSince1970];
-    if (geometryUsed > 0 && (g_lastActorGeometryLog <= 0.0 || now - g_lastActorGeometryLog >= 10.0)) {
-        g_lastActorGeometryLog = now;
-        runtimeLog([NSString stringWithFormat:@"actor geometry50 first=%s", geometry]);
     }
 }
 
