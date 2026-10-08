@@ -4,6 +4,7 @@
 #import <UIKit/UIKit.h>
 #import <dispatch/dispatch.h>
 #import <dlfcn.h>
+#import <mach/mach.h>
 #include <string.h>
 #include <math.h>
 #include <stdio.h>
@@ -959,6 +960,100 @@ static BOOL g_loggedDirectPositionFailure = NO;
 static BOOL g_loggedMyTransformSource = NO;
 static BOOL g_loggedTransformPositionSource = NO;
 
+/* ActorLinker layout confirmed by the dump for this build.  The object
+ * pointer is read with vm_read_overwrite so a pooled/deactivated actor cannot
+ * take down the refresh queue.  The vectors themselves are obtained through
+ * IL2CPP getters, which preserves the value-type ABI. */
+enum ActorPositionSource {
+    kActorPositionNone = 0,
+    kActorPositionMoveCur = 1,
+    kActorPositionMoveRemote = 2,
+    kActorPositionField = 3,
+    kActorPositionLogical = 4,
+    kActorPositionTransform = 5
+};
+
+static BOOL isFiniteVector3(Il2CppVector3 value);
+static BOOL decodeBoxedVector3(Il2CppObject *boxed, Il2CppException *exception,
+                               Il2CppVector3 *outPosition);
+static Il2CppObject *invokeMethod(const Il2CppMethodInfo *method, Il2CppObject *object,
+                                  void **params, Il2CppException **exception);
+
+static BOOL readProcessBytes(uintptr_t address, void *buffer, size_t size) {
+    if (!address || !buffer || size == 0) return NO;
+    vm_size_t copied = 0;
+    kern_return_t kr = vm_read_overwrite(mach_task_self(), (vm_address_t)address,
+                                         (vm_size_t)size, (vm_address_t)buffer,
+                                         &copied);
+    return kr == KERN_SUCCESS && copied == size;
+}
+
+static BOOL readObjectPointerField(Il2CppObject *object, size_t offset,
+                                   Il2CppObject **outObject) {
+    if (outObject) *outObject = NULL;
+    if (!object || !outObject) return NO;
+    uintptr_t value = 0;
+    if (!readProcessBytes((uintptr_t)object + offset, &value, sizeof(value))) return NO;
+    if (!value) return NO;
+    *outObject = (Il2CppObject *)value;
+    return YES;
+}
+
+static BOOL readVector3Field(Il2CppObject *object, size_t offset,
+                             Il2CppVector3 *outValue) {
+    if (!object || !outValue) return NO;
+    Il2CppVector3 value = {0, 0, 0};
+    if (!readProcessBytes((uintptr_t)object + offset, &value, sizeof(value))) return NO;
+    if (!isFiniteVector3(value)) return NO;
+    *outValue = value;
+    return YES;
+}
+
+static BOOL isPlausibleWorldVector(Il2CppVector3 value) {
+    return isFiniteVector3(value) && fabsf(value.x) < 100000.0f &&
+        fabsf(value.y) < 100000.0f && fabsf(value.z) < 100000.0f;
+}
+
+static BOOL readMoveComponentPosition(Il2CppObject *moveControl,
+                                      const char *getterName,
+                                      Il2CppVector3 *outValue) {
+    if (!moveControl || !getterName || !outValue || !p_il2cpp_object_get_class) return NO;
+    void *moveClass = p_il2cpp_object_get_class(moveControl);
+    const Il2CppMethodInfo *getter = resolveMethod(moveClass, getterName, 0);
+    if (!getter) return NO;
+    Il2CppException *exception = NULL;
+    Il2CppObject *boxed = invokeMethod(getter, moveControl, NULL, &exception);
+    return decodeBoxedVector3(boxed, exception, outValue);
+}
+
+static BOOL readActorMovementSources(Il2CppObject *actor, Il2CppVector3 *cur,
+                                     Il2CppVector3 *remote, Il2CppVector3 *field,
+                                     Il2CppObject **moveControlOut) {
+    if (cur) *cur = (Il2CppVector3){0, 0, 0};
+    if (remote) *remote = (Il2CppVector3){0, 0, 0};
+    if (field) *field = (Il2CppVector3){0, 0, 0};
+    if (moveControlOut) *moveControlOut = NULL;
+    if (!actor) return NO;
+
+    Il2CppObject *moveControl = NULL;
+    BOOL pointerOK = readObjectPointerField(actor, 0x420, &moveControl);
+    if (moveControlOut) *moveControlOut = moveControl;
+    BOOL curOK = pointerOK && cur && readMoveComponentPosition(moveControl, "get_CurPosition", cur);
+    BOOL remoteOK = pointerOK && remote && readMoveComponentPosition(moveControl, "get_RemotePosition", remote);
+    BOOL fieldOK = field && readVector3Field(actor, 0x4C4, field);
+
+    /* Raw fields are a diagnostic fallback if a stripped build does not expose
+       the MoveComponent getters; the offsets are from the supplied dump. */
+    if (pointerOK && moveControl) {
+        if (!curOK && cur) curOK = readVector3Field(moveControl, 0x28, cur);
+        if (!remoteOK && remote) remoteOK = readVector3Field(moveControl, 0x34, remote);
+    }
+    return curOK || remoteOK || fieldOK;
+}
+
+static BOOL g_movementSourceLogged[6] = { NO, NO, NO, NO, NO, NO };
+static NSTimeInterval g_lastMovementDiagnostic = 0.0;
+
 static BOOL isFiniteVector3(Il2CppVector3 value) {
     return isfinite(value.x) && isfinite(value.y) && isfinite(value.z);
 }
@@ -1057,9 +1152,102 @@ static BOOL tryTransformPosition(Il2CppObject *object, void *objectClass,
     return YES;
 }
 
+static float vectorLengthSq(Il2CppVector3 value) {
+    return value.x * value.x + value.y * value.y + value.z * value.z;
+}
+
+static BOOL readActorPositionWithMovement(Il2CppObject *object, void *objectClass,
+                                          Il2CppVector3 *outPosition,
+                                          enum ActorPositionSource *outSource) {
+    if (outSource) *outSource = kActorPositionNone;
+    if (!object || !objectClass || !outPosition) return NO;
+
+    char className[64] = {0};
+    const char *name = p_il2cpp_class_get_name ? p_il2cpp_class_get_name(objectClass) : NULL;
+    if (name) strncpy(className, name, sizeof(className) - 1);
+    BOOL isActorLinker = strcmp(className, "ActorLinker") == 0;
+    if (!isActorLinker) return NO;
+
+    Il2CppVector3 cur = {0, 0, 0};
+    Il2CppVector3 remote = {0, 0, 0};
+    Il2CppVector3 field = {0, 0, 0};
+    Il2CppObject *moveControl = NULL;
+    BOOL movementOK = readActorMovementSources(object, &cur, &remote, &field, &moveControl);
+    BOOL curOK = movementOK && isPlausibleWorldVector(cur);
+    BOOL remoteOK = movementOK && isPlausibleWorldVector(remote);
+    BOOL fieldOK = movementOK && isPlausibleWorldVector(field);
+
+    Il2CppVector3 logical = {0, 0, 0};
+    BOOL logicalOK = tryActorLogicalPosition(object, objectClass, &logical) &&
+        isPlausibleWorldVector(logical);
+
+    /* CurPosition is the continuously interpolated gameplay position.  Keep
+       a valid logical position only for actors whose movement component has
+       not been initialized yet (the common lobby/pool state). */
+    if (curOK && !(vectorLengthSq(cur) < 0.0001f && logicalOK && vectorLengthSq(logical) > 1.0f)) {
+        *outPosition = cur;
+        if (outSource) *outSource = kActorPositionMoveCur;
+        if (!g_movementSourceLogged[kActorPositionMoveCur]) {
+            g_movementSourceLogged[kActorPositionMoveCur] = YES;
+            runtimeLog([NSString stringWithFormat:
+                @"position source=moveCur field=0x420+0x28 world=(%.2f,%.2f,%.2f) move=0x%lx",
+                cur.x, cur.y, cur.z, (uintptr_t)moveControl]);
+        }
+        return YES;
+    }
+    if (remoteOK && !(vectorLengthSq(remote) < 0.0001f && logicalOK && vectorLengthSq(logical) > 1.0f)) {
+        *outPosition = remote;
+        if (outSource) *outSource = kActorPositionMoveRemote;
+        if (!g_movementSourceLogged[kActorPositionMoveRemote]) {
+            g_movementSourceLogged[kActorPositionMoveRemote] = YES;
+            runtimeLog([NSString stringWithFormat:
+                @"position source=moveRemote field=0x420+0x34 world=(%.2f,%.2f,%.2f) move=0x%lx",
+                remote.x, remote.y, remote.z, (uintptr_t)moveControl]);
+        }
+        return YES;
+    }
+    if (fieldOK) {
+        *outPosition = field;
+        if (outSource) *outSource = kActorPositionField;
+        return YES;
+    }
+    if (logicalOK) {
+        *outPosition = logical;
+        if (outSource) *outSource = kActorPositionLogical;
+        return YES;
+    }
+    return NO;
+}
+
+static void logActorMovementDiagnostic(Il2CppObject *actor, const char *label) {
+    if (!actor || !p_il2cpp_object_get_class) return;
+    void *objectClass = p_il2cpp_object_get_class(actor);
+    const char *className = objectClass && p_il2cpp_class_get_name
+        ? p_il2cpp_class_get_name(objectClass) : NULL;
+    if (!className || strcmp(className, "ActorLinker") != 0) return;
+    Il2CppVector3 cur = {0, 0, 0};
+    Il2CppVector3 remote = {0, 0, 0};
+    Il2CppVector3 field = {0, 0, 0};
+    Il2CppVector3 logical = {0, 0, 0};
+    Il2CppObject *moveControl = NULL;
+    BOOL sources = readActorMovementSources(actor, &cur, &remote, &field, &moveControl);
+    BOOL logicalOK = tryActorLogicalPosition(actor, objectClass, &logical);
+    enum ActorPositionSource selected = kActorPositionNone;
+    Il2CppVector3 selectedValue = {0, 0, 0};
+    readActorPositionWithMovement(actor, objectClass, &selectedValue, &selected);
+    runtimeLog([NSString stringWithFormat:
+        @"movement diagnostic label=%s actor=0x%lx move=0x%lx sources=%d logical=%s field=(%.2f,%.2f,%.2f) cur=(%.2f,%.2f,%.2f) remote=(%.2f,%.2f,%.2f) selected=%d selectedPos=(%.2f,%.2f,%.2f)",
+        label ?: "actor", (uintptr_t)actor, (uintptr_t)moveControl, sources ? 1 : 0,
+        logicalOK ? "ok" : "no", field.x, field.y, field.z, cur.x, cur.y, cur.z,
+        remote.x, remote.y, remote.z, selected, selectedValue.x, selectedValue.y,
+        selectedValue.z]);
+}
+
 static BOOL readObjectPosition(Il2CppObject *object, Il2CppVector3 *outPosition) {
     if (!object || !outPosition || !p_il2cpp_object_get_class || !p_il2cpp_object_unbox) return NO;
     void *objectClass = p_il2cpp_object_get_class(object);
+    enum ActorPositionSource source = kActorPositionNone;
+    if (readActorPositionWithMovement(object, objectClass, outPosition, &source)) return YES;
     if (tryActorLogicalPosition(object, objectClass, outPosition)) return YES;
     return tryTransformPosition(object, objectClass, outPosition);
 }
@@ -1487,6 +1675,19 @@ static void refreshActorSnapshotPositions(void) {
     if (!g_singleHeroSuccess || g_actorPositionRefCount50 <= 0) return;
     if (!prepareProjectionContext()) return;
 
+    NSTimeInterval diagnosticNow = [NSDate timeIntervalSinceReferenceDate];
+    if (g_lastMovementDiagnostic <= 0.0 ||
+        diagnosticNow - g_lastMovementDiagnostic >= 5.0) {
+        g_lastMovementDiagnostic = diagnosticNow;
+        int logged = 0;
+        for (int i = 0; i < g_actorPositionRefCount50 && logged < 2; i++) {
+            if (!g_actorPositionRefs50[i].object) continue;
+            logActorMovementDiagnostic(g_actorPositionRefs50[i].object,
+                                       g_actorPositionRefs50[i].displayName);
+            logged++;
+        }
+    }
+
     espBeginEntitySnapshot();
     int valid = 0;
     for (int i = 0; i < g_actorPositionRefCount50 && valid < 50; i++) {
@@ -1545,8 +1746,9 @@ static int appendSupplementalActorList(void *actorClass, Il2CppObject *actorMana
     BOOL countOK = NO;
     int count = readBoxedIntResult(countMethod, list, NULL, &countOK);
     if (!countOK || count < 0 || count > 256) count = 0;
-    static int lastCounts[2] = { -1, -1 };
-    int slot = strcmp(sourceName, "CallMonster") == 0 ? 0 : 1;
+    static int lastCounts[3] = { -1, -1, -1 };
+    int slot = strcmp(sourceName, "CallMonster") == 0 ? 0 :
+        (strcmp(sourceName, "CallActor") == 0 ? 1 : 2);
     if (lastCounts[slot] != count) {
         lastCounts[slot] = count;
         runtimeLog([NSString stringWithFormat:
@@ -1557,8 +1759,9 @@ static int appendSupplementalActorList(void *actorClass, Il2CppObject *actorMana
     if (!itemMethod || count <= 0) return 0;
 
     int appended = 0;
-    static BOOL itemTypeLogged[2] = { NO, NO };
-    int itemTypeSlot = strcmp(sourceName, "CallMonster") == 0 ? 0 : 1;
+    static BOOL itemTypeLogged[3] = { NO, NO, NO };
+    int itemTypeSlot = strcmp(sourceName, "CallMonster") == 0 ? 0 :
+        (strcmp(sourceName, "CallActor") == 0 ? 1 : 2);
     for (int index = 0; index < count && *valid < 50; index++) {
         int32_t indexValue = index;
         void *params[1] = { &indexValue };
@@ -1685,6 +1888,13 @@ static void probeActorSnapshot50(void *actorClass, Il2CppObject *actorManager) {
                                                       sizeof(signature), &signatureUsed);
     supplementalValid += appendSupplementalActorList(actorClass, actorManager,
                                                       "GetCallActors", "CallActor",
+                                                      &g_actorSnapshot50Valid, signature,
+                                                      sizeof(signature), &signatureUsed);
+    /* ActorManager keeps a separate OrganActors list.  In this build it is
+       the only confirmed container beyond the five category accessors that
+       can contain spawned small neutral/organ actors. */
+    supplementalValid += appendSupplementalActorList(actorClass, actorManager,
+                                                      "GetOrganActors", "OrganList",
                                                       &g_actorSnapshot50Valid, signature,
                                                       sizeof(signature), &signatureUsed);
     if (supplementalValid > 0) {
