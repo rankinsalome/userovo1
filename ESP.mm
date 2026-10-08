@@ -32,7 +32,8 @@ static void espLog(NSString *message) {
 
 static NSArray<NSString *> *espLogPaths(void) {
     NSArray *documentsPaths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
-    NSString *documents = documentsPaths.firstObject.length ? documentsPaths.firstObject : NSTemporaryDirectory();
+    NSString *documentsCandidate = (NSString *)[documentsPaths firstObject];
+    NSString *documents = [documentsCandidate length] ? documentsCandidate : NSTemporaryDirectory();
     NSString *documentsDir = [documents stringByAppendingPathComponent:@"gamehack_logs"];
     NSString *compatDir = @"/var/mobile/Library/Logs/gamehack";
     return @[[documentsDir stringByAppendingPathComponent:@"esp.log"],
