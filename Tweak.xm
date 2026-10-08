@@ -1195,6 +1195,18 @@ static NSTimeInterval g_lastActorGeometryLog = 0.0;
 static float g_lastUnityViewportWidth = 0.0f;
 static float g_lastUnityViewportHeight = 0.0f;
 
+typedef struct {
+    Il2CppObject *object;
+    char displayName[128];
+    char namespaceName[96];
+} ActorPositionRef50;
+
+static ActorPositionRef50 g_actorPositionRefs50[64];
+static int g_actorPositionRefCount50 = 0;
+static int g_positionRefreshValid50 = 0;
+static uint64_t g_positionRefreshCount = 0;
+static NSTimeInterval g_lastPositionRefreshLog = 0.0;
+
 static int readBoxedIntResult(const Il2CppMethodInfo *method, Il2CppObject *object,
                               void **params, BOOL *ok) {
     if (ok) *ok = NO;
@@ -1381,6 +1393,62 @@ static void logActorCategoryCounts(void *actorClass, Il2CppObject *actorManager)
         values[0], values[1], values[2], values[3], values[4]]);
 }
 
+static BOOL isUsableActorWorld(Il2CppVector3 world) {
+    if (!isfinite(world.x) || !isfinite(world.y) || !isfinite(world.z)) return NO;
+    /* ActorManager returns this stable placeholder for an uninitialized slot. */
+    if (fabsf(world.x - 1000.0f) < 0.01f &&
+        fabsf(world.y + 100.0f) < 0.01f &&
+        fabsf(world.z - 1000.0f) < 0.01f) return NO;
+    return YES;
+}
+
+static BOOL isUsableActorScreen(Il2CppVector3 screen) {
+    return isfinite(screen.x) && isfinite(screen.y) && isfinite(screen.z) && screen.z > 0.0f;
+}
+
+static BOOL appendActorPositionSnapshot(const ActorPositionRef50 *ref) {
+    if (!ref || !ref->object) return NO;
+    Il2CppVector3 world = {0, 0, 0};
+    if (!readObjectPosition(ref->object, &world) || !isUsableActorWorld(world)) return NO;
+    Il2CppVector3 screen = {-1, -1, -1};
+    if (!projectWorldPosition(world, &screen) || !isUsableActorScreen(screen)) return NO;
+    espAppendEntitySnapshot(world.x, world.y, world.z,
+                            screen.x, screen.y, screen.z,
+                            ref->displayName, ref->namespaceName);
+    return YES;
+}
+
+static void refreshActorSnapshotPositions(void) {
+    if (!g_singleHeroSuccess || g_actorPositionRefCount50 <= 0) return;
+    if (!prepareProjectionContext()) return;
+
+    espBeginEntitySnapshot();
+    int valid = 0;
+    for (int i = 0; i < g_actorPositionRefCount50 && valid < 50; i++) {
+        if (appendActorPositionSnapshot(&g_actorPositionRefs50[i])) valid++;
+    }
+    espCommitEntitySnapshot();
+    g_positionRefreshValid50 = valid;
+    g_actorSnapshot50Valid = valid;
+    espSetRuntimeEntityCount(valid);
+    g_positionRefreshCount++;
+
+    NSTimeInterval now = [NSDate timeIntervalSinceReferenceDate];
+    if (g_lastPositionRefreshLog <= 0.0 || now - g_lastPositionRefreshLog >= 5.0) {
+        static uint64_t previousCount = 0;
+        NSTimeInterval elapsed = g_lastPositionRefreshLog > 0.0
+            ? now - g_lastPositionRefreshLog : 5.0;
+        uint64_t delta = g_positionRefreshCount - previousCount;
+        double rate = elapsed > 0.0 ? (double)delta / elapsed : 0.0;
+        previousCount = g_positionRefreshCount;
+        g_lastPositionRefreshLog = now;
+        runtimeLog([NSString stringWithFormat:
+            @"position refresh count=%llu refs=%d valid=%d rate=%.1fHz",
+            (unsigned long long)g_positionRefreshCount, g_actorPositionRefCount50,
+            g_positionRefreshValid50, rate]);
+    }
+}
+
 static void probeActorSnapshot50(void *actorClass, Il2CppObject *actorManager) {
     static const char *countNames[] = {
         "GetHeroActorCount", "GetOrganActorCount", "GetSoldierActorCount",
@@ -1392,6 +1460,8 @@ static void probeActorSnapshot50(void *actorClass, Il2CppObject *actorManager) {
     };
     static const char *sourceNames[] = { "Hero", "Organ", "Soldier", "BuffMonster", "Dragon" };
     g_actorSnapshot50Valid = 0;
+    g_actorPositionRefCount50 = 0;
+    memset(g_actorPositionRefs50, 0, sizeof(g_actorPositionRefs50));
     if (!g_singleHeroSuccess || !actorClass || !actorManager) {
         espClearEntitySnapshot();
         return;
@@ -1427,14 +1497,20 @@ static void probeActorSnapshot50(void *actorClass, Il2CppObject *actorManager) {
             char namespaceName[96] = {0};
             readObjectClassName(actor, className, sizeof(className), namespaceName, sizeof(namespaceName));
             Il2CppVector3 world = {0, 0, 0};
-            if (!readObjectPosition(actor, &world)) continue;
+            if (!readObjectPosition(actor, &world) || !isUsableActorWorld(world)) continue;
             Il2CppVector3 screen = {-1, -1, -1};
-            BOOL screenOK = projectWorldPosition(world, &screen);
-            if (!screenOK) continue;
+            BOOL screenOK = projectWorldPosition(world, &screen) && isUsableActorScreen(screen);
 
             char displayName[96] = {0};
             snprintf(displayName, sizeof(displayName), "%s[%d] %s", sourceNames[source], index,
                      className[0] ? className : "Actor");
+            if (g_actorPositionRefCount50 < 64) {
+                ActorPositionRef50 *ref = &g_actorPositionRefs50[g_actorPositionRefCount50++];
+                ref->object = actor;
+                strncpy(ref->displayName, displayName, sizeof(ref->displayName) - 1);
+                strncpy(ref->namespaceName, namespaceName, sizeof(ref->namespaceName) - 1);
+            }
+            if (!screenOK) continue;
             espAppendEntitySnapshot(world.x, world.y, world.z, screen.x,
                                     screen.y, screen.z,
                                     displayName, namespaceName);
@@ -1580,13 +1656,16 @@ static void probeEntityManagers(void) {
 /* 0 means run until the process enters background. */
 static const NSTimeInterval kEntitySamplingDuration = 0.0;
 static const NSTimeInterval kEntitySamplingInterval = 2.0;
+static const NSTimeInterval kEntityPositionRefreshInterval = 1.0 / 30.0;
 static int g_entitySample = 0;
 static bool g_entitySampling = false;
 static bool g_entitySamplingActive = false;
+static bool g_entityPositionSampling = false;
 static bool g_runtimePaused = false;
 static NSTimeInterval g_entitySamplingStartedAt = 0.0;
 
 static void scheduleNextEntityManagerSample(void);
+static void scheduleNextEntityPositionRefresh(void);
 
 static NSTimeInterval entitySamplingElapsed(void) {
     if (g_entitySamplingStartedAt <= 0.0) return 0.0;
@@ -1600,9 +1679,42 @@ static BOOL entitySamplingExpired(void) {
 static void finishEntityManagerSampling(NSString *reason) {
     if (!g_entitySamplingActive) return;
     g_entitySamplingActive = false;
+    g_entityPositionSampling = false;
     runtimeLog([NSString stringWithFormat:
         @"entity manager sampling finished samples=%d elapsed=%.1fs reason=%@",
         g_entitySample, entitySamplingElapsed(), reason ?: @"unknown"]);
+}
+
+static void runEntityPositionRefresh(void) {
+    if (!g_entityPositionSampling || g_runtimePaused) return;
+    if (g_entitySampling) {
+        scheduleNextEntityPositionRefresh();
+        return;
+    }
+    @try {
+        refreshActorSnapshotPositions();
+    } @catch (NSException *exception) {
+        runtimeLog([NSString stringWithFormat:@"position refresh exception=%@",
+            exception.reason ?: @"unknown"]);
+    }
+    scheduleNextEntityPositionRefresh();
+}
+
+static void scheduleNextEntityPositionRefresh(void) {
+    if (!g_entityPositionSampling || g_runtimePaused) return;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,
+                                  (int64_t)(kEntityPositionRefreshInterval * NSEC_PER_SEC)),
+        dispatch_get_main_queue(), ^{
+            if (g_entityPositionSampling && !g_runtimePaused) runEntityPositionRefresh();
+        });
+}
+
+static void scheduleEntityPositionSampling(void) {
+    if (g_runtimePaused || g_entityPositionSampling) return;
+    g_entityPositionSampling = true;
+    runtimeLog([NSString stringWithFormat:
+        @"position sampling started interval=%.3fs", kEntityPositionRefreshInterval]);
+    scheduleNextEntityPositionRefresh();
 }
 
 static void runEntityManagerSample(void) {
@@ -1655,6 +1767,7 @@ static void scheduleEntityManagerSampling(void) {
         @"entity manager sampling started duration=%@ interval=%.1fs",
         kEntitySamplingDuration > 0.0 ? [NSString stringWithFormat:@"%.1fs", kEntitySamplingDuration] : @"until-background",
         kEntitySamplingInterval]);
+    scheduleEntityPositionSampling();
     scheduleNextEntityManagerSample();
 }
 
@@ -1797,6 +1910,7 @@ static void installRuntimeLifecycleObservers(void) {
                     usingBlock:^(__unused NSNotification *note) {
         g_runtimePaused = true;
         g_entitySamplingActive = false;
+        g_entityPositionSampling = false;
         espSetPaused(true);
         espClearEntitySnapshot();
         runtimeLog(@"runtime paused reason=did-enter-background");
