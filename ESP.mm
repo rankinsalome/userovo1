@@ -12,6 +12,7 @@ typedef struct { float m[16]; } M4x4;
 typedef struct { float x, y, z; } Vec3;
 
 bool g_espEnabled = false;
+bool g_espDebugMode = false;
 M4x4 g_viewMat, g_projMat;
 bool g_matValid = false;
 bool g_screenValid = false;
@@ -39,9 +40,10 @@ typedef struct {
     char className[96];
     char namespaceName[96];
 } EEnt;
-EEnt g_ents[64];
+static const int kMaxESPEntries = 512;
+EEnt g_ents[kMaxESPEntries];
 int g_entCnt=0;
-static EEnt g_pendingEnts[64];
+static EEnt g_pendingEnts[kMaxESPEntries];
 static int g_pendingEntCnt = 0;
 static os_unfair_lock g_entLock = OS_UNFAIR_LOCK_INIT;
 static float g_unityViewportWidth = 0.0f;
@@ -71,7 +73,7 @@ void espSetRuntimeDiagnostics(int actorCount, int playerCount, bool cameraValid)
 
 void espSetRuntimeEntityCount(int count) {
     os_unfair_lock_lock(&g_runtimeDiagnosticsLock);
-    g_runtimeEntityCount = MAX(0, MIN(count, 64));
+    g_runtimeEntityCount = MAX(0, MIN(count, kMaxESPEntries));
     os_unfair_lock_unlock(&g_runtimeDiagnosticsLock);
 }
 
@@ -154,7 +156,7 @@ void espBeginEntitySnapshot(void) {
 void espAppendEntitySnapshot(float x, float y, float z,
                              float sx, float sy, float sz,
                              const char *className, const char *namespaceName) {
-    if (g_pendingEntCnt >= 64) return;
+    if (g_pendingEntCnt >= kMaxESPEntries) return;
     EEnt *e = &g_pendingEnts[g_pendingEntCnt++];
     e->pos = Vec3{x, y, z};
     e->screen = Vec3{sx, sy, sz};
@@ -295,10 +297,10 @@ static EspView *g_espView = nil;
     CGContextAddLineToPoint(c, cx, cy + 8.0f);
     CGContextStrokePath(c);
 
-    EEnt local[64]; int localCount = 0;
+    EEnt local[kMaxESPEntries]; int localCount = 0;
     os_unfair_lock_lock(&g_entLock);
     localCount = g_entCnt;
-    if (localCount > 64) localCount = 64;
+    if (localCount > kMaxESPEntries) localCount = kMaxESPEntries;
     memcpy(local, g_ents, sizeof(EEnt) * localCount);
     os_unfair_lock_unlock(&g_entLock);
     float unityWidth = 0.0f;

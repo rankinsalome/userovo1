@@ -111,6 +111,7 @@ static bool g_cameraProbeValid = false;
 
 /* ESP externs */
 extern bool g_espEnabled;
+extern bool g_espDebugMode;
 extern void showESPOverlay(void);
 extern void hideESPOverlay(void);
 extern void updateESPMatrices(void);
@@ -309,7 +310,6 @@ static bool hook_get_bVisible(void *self) {
 @end
 
 static HUDWindow *g_hud = nil;
-static UITextView *g_output = nil;
 static UIVisualEffectView *g_panel = nil;
 static CAGradientLayer *g_gradient = nil;
 static UIView *g_statusDot = nil;
@@ -340,49 +340,6 @@ static uintptr_t getStaticFields(void) {
     uintptr_t sf = *(uintptr_t *)(klass + 0xB8);
     if (!sf || sf < 0x1000) return 0;
     return sf;
-}
-
-static NSString *readAll(void) {
-    NSMutableString *s = [NSMutableString string];
-    [s appendFormat:@"UnityFramework  0x%lx\n", unityBase];
-    if (!unityBase) { [s appendString:@"[!] UnityFramework missing\n"]; return s; }
-
-    uintptr_t sf = getStaticFields();
-    [s appendFormat:@"StaticFields     0x%lx\n", sf];
-
-    if (sf) {
-        int32_t ch = *(int32_t *)(sf + 0x1AC);
-        [s appendFormat:@"CameraHeight     %d\n", ch];
-        uint32_t f128 = *(uint32_t *)(sf + 0x128);
-        uint32_t f130 = *(uint32_t *)(sf + 0x130);
-        uint32_t f138 = *(uint32_t *)(sf + 0x138);
-        uint32_t f140 = *(uint32_t *)(sf + 0x140);
-        [s appendFormat:@"FogParam[128]    0x%08X\n", f128];
-        [s appendFormat:@"FogParam[130]    0x%08X\n", f130];
-        [s appendFormat:@"FogParam[138]    0x%08X\n", f138];
-        [s appendFormat:@"FogParam[140]    0x%08X\n", f140];
-    }
-
-    [s appendString:@"\n-- HOOKS --\n"];
-    [s appendFormat:@"MapHackHook     %s\n",
-        g_mapHackInstalled ? "INSTALLED" : "NOT INSTALLED"];
-    
-
-    [s appendString:@"\n-- STATE --\n"];
-    [s appendFormat:@"MapHack        %s\n", g_mapHackEnabled ? "ON" : "OFF"];
-    [s appendFormat:@"VisualFog      %s\n", g_fogDisabled ? "CLEAR" : "标准"];
-    NSArray *documentsPaths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
-    NSString *documentsCandidate = (NSString *)[documentsPaths firstObject];
-    NSString *documents = [documentsCandidate length] ? documentsCandidate : NSTemporaryDirectory();
-    NSString *logDir = [documents stringByAppendingPathComponent:@"gamehack_logs"];
-    [s appendString:@"\n-- RUNTIME PROBES --\n"];
-    [s appendFormat:@"ESP camera     %s (Camera.main probe)\n",
-        g_cameraProbeValid ? "VERIFIED" : "UNRESOLVED"];
-    [s appendString:@"ESP entities   COUNTS ONLY (object probe safety-gated)\n"];
-    [s appendFormat:@"ESP log         %@\nRuntime log     %@\n", [logDir stringByAppendingPathComponent:@"esp.log"], [logDir stringByAppendingPathComponent:@"runtime.log"]];
-    [s appendString:@"Compat logs     /var/mobile/Library/Logs/gamehack/esp.log\n                /var/mobile/Library/Logs/gamehack/runtime.log\n"];
-
-    return s;
 }
 
 static void writeCameraHeight(int32_t v) {
@@ -544,169 +501,51 @@ static void showHUD(void) {
         [scroll addSubview:content];
         scroll.contentSize = CGSizeMake(w, 720);
 
-        CGFloat y = 12.0;
+        CGFloat y = 16.0;
+        UILabel *modeSec = mkSec(@"运行模式");
+        modeSec.frame = CGRectMake(pad, y, cw, 18);
+        [content addSubview:modeSec];
+        y += 28.0;
 
-        /* ── FOG OF WAR SECTION ── */
-        UILabel *fogSec = mkSec(@"战争迷雾 / 地图透视");
-        fogSec.frame = CGRectMake(pad, y, cw, 16);
-        [content addSubview:fogSec];
-        y += 20;
-
-        UIView *fogBox = [[UIView alloc] initWithFrame:CGRectMake(pad, y, cw, 88)];
-        fogBox.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.04];
-        fogBox.layer.cornerRadius = 14;
-        [content addSubview:fogBox];
-
-        UIButton *btnMapHack = mkBtn(@"开启全图透视",
-            [UIColor colorWithRed:0.22 green:0.65 blue:0.42 alpha:1.0],
-            [UIColor whiteColor], 13);
-        btnMapHack.frame = CGRectMake(12, 10, cw - 24, 36);
-        btnMapHack.layer.cornerRadius = 10;
-        [btnMapHack addAction:[UIAction actionWithHandler:^(UIAction *act) {
-            if (!g_mapHackInstalled && unityBase) installMapHack();
-            if (!g_mapHackInstalled) {
-                g_output.text = @"[!] Hooks failed - wrong game version.\nCheck RVA offsets match binary.";
-                return;
-            }
-            g_mapHackEnabled = !g_mapHackEnabled;
-            g_fogDisabled = g_mapHackEnabled;
-            NSString *t = g_mapHackEnabled ? @"关闭全图透视" : @"开启全图透视";
-            UIColor *c = g_mapHackEnabled
-                ? [UIColor colorWithRed:0.88 green:0.38 blue:0.33 alpha:1.0]
-                : [UIColor colorWithRed:0.22 green:0.65 blue:0.42 alpha:1.0];
-            [act.sender setTitle:t forState:UIControlStateNormal];
-            ((UIButton *)act.sender).backgroundColor = c;
-            updateStatusUI();
-            g_output.text = readAll();
-        }] forControlEvents:UIControlEventTouchUpInside];
-        [fogBox addSubview:btnMapHack];
-
-        CGFloat sw = (cw - 40) / 2;
-
-        UIButton *btnFogVis = mkBtn(@"清除视觉迷雾",
-            [UIColor colorWithRed:0.18 green:0.45 blue:0.78 alpha:1.0],
-            [UIColor whiteColor], 11);
-        btnFogVis.frame = CGRectMake(12, 54, sw, 26);
-        [btnFogVis addAction:[UIAction actionWithHandler:^(UIAction *act) {
-            if (!g_mapHackInstalled && unityBase) installMapHack();
-            g_fogDisabled = !g_fogDisabled;
-            NSString *t = g_fogDisabled ? @"恢复视觉迷雾" : @"清除视觉迷雾";
-            [act.sender setTitle:t forState:UIControlStateNormal];
-            updateStatusUI();
-            g_output.text = readAll();
-        }] forControlEvents:UIControlEventTouchUpInside];
-        [fogBox addSubview:btnFogVis];
-
-        UIButton *btnReset = mkBtn(@"重置全部迷雾",
-            [UIColor colorWithWhite:0.24 alpha:1.0],
-            [UIColor lightGrayColor], 11);
-        btnReset.frame = CGRectMake(24 + sw, 54, sw, 26);
-        [btnReset addAction:[UIAction actionWithHandler:^(UIAction *act) {
-            g_mapHackEnabled = false;
-            g_fogDisabled = false;
-            updateStatusUI();
-            g_output.text = readAll();
-        }] forControlEvents:UIControlEventTouchUpInside];
-        [fogBox addSubview:btnReset];
-
-        y += 100;
-
-        UIButton *btnESP = mkBtn(@"透视",
+        UIButton *btnESP = mkBtn(@"透视模式\n正常使用 · 当前实体链",
             [UIColor colorWithRed:0.55 green:0.22 blue:0.72 alpha:1.0],
             [UIColor whiteColor], 13);
-        btnESP.frame = CGRectMake(pad, y, cw, 34);
+        btnESP.frame = CGRectMake(pad, y, cw, 52);
         btnESP.layer.cornerRadius = 10;
         [btnESP addAction:[UIAction actionWithHandler:^(UIAction *act) {
+            g_espDebugMode = false;
             g_espEnabled = !g_espEnabled;
-            if (g_espEnabled) {
-                showESPOverlay();
-                updateESPMatrices();
-                [act.sender setTitle:@"关闭" forState:UIControlStateNormal];
-                ((UIButton *)act.sender).backgroundColor = [UIColor colorWithRed:0.88 green:0.38 blue:0.33 alpha:1.0];
-            } else {
-                hideESPOverlay();
-                [act.sender setTitle:@"透视" forState:UIControlStateNormal];
-                ((UIButton *)act.sender).backgroundColor = [UIColor colorWithRed:0.55 green:0.22 blue:0.72 alpha:1.0];
-            }
-            g_output.text = readAll();
+            if (g_espEnabled) { showESPOverlay(); updateESPMatrices(); }
+            else { hideESPOverlay(); }
         }] forControlEvents:UIControlEventTouchUpInside];
         [content addSubview:btnESP];
-        y += 44;
+        y += 64.0;
 
-        /* ── CAMERA SECTION ── */
-        UILabel *camSec = mkSec(@"镜头控制");
-        camSec.frame = CGRectMake(pad, y, cw, 16);
-        [content addSubview:camSec];
-        y += 20;
-
-        UIView *camBox = [[UIView alloc] initWithFrame:CGRectMake(pad, y, cw, 122)];
-        camBox.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.04];
-        camBox.layer.cornerRadius = 14;
-        [content addSubview:camBox];
-
-        UIButton *btnRead = mkBtn(@"读取内存状态",
-            [UIColor colorWithRed:0.28 green:0.48 blue:0.92 alpha:1.0],
+        UIButton *btnDebug = mkBtn(@"调试模式\n全量显示 · SGW 显示缓存",
+            [UIColor colorWithRed:0.16 green:0.50 blue:0.76 alpha:1.0],
             [UIColor whiteColor], 13);
-        btnRead.frame = CGRectMake(12, 12, cw - 24, 34);
-        btnRead.layer.cornerRadius = 10;
-        [btnRead addAction:[UIAction actionWithHandler:^(UIAction *act) {
-            runtimeLog(@"manual state read requested");
-            g_output.text = readAll();
+        btnDebug.frame = CGRectMake(pad, y, cw, 52);
+        btnDebug.layer.cornerRadius = 10;
+        [btnDebug addAction:[UIAction actionWithHandler:^(UIAction *act) {
+            g_espDebugMode = !g_espDebugMode;
+            g_espEnabled = g_espDebugMode;
+            if (g_espEnabled) { showESPOverlay(); updateESPMatrices(); }
+            else { hideESPOverlay(); }
+            runtimeLog([NSString stringWithFormat:@"mode changed debug=%d", g_espDebugMode]);
         }] forControlEvents:UIControlEventTouchUpInside];
-        [camBox addSubview:btnRead];
+        [content addSubview:btnDebug];
+        y += 72.0;
 
-        CGFloat pw = (cw - 40) / 2;
-        NSArray *presets = @[
-            @{@"t":@"超近景", @"v":@0,
-              @"c":[UIColor colorWithRed:0.22 green:0.74 blue:0.52 alpha:1.0]},
-            @{@"t":@"近景", @"v":@1,
-              @"c":[UIColor colorWithRed:0.26 green:0.62 blue:0.88 alpha:1.0]},
-            @{@"t":@"标准", @"v":@2,
-              @"c":[UIColor colorWithRed:0.88 green:0.55 blue:0.35 alpha:1.0]},
-            @{@"t":@"远景", @"v":@5,
-              @"c":[UIColor colorWithRed:0.62 green:0.48 blue:0.88 alpha:1.0]},
-        ];
-        for (int i = 0; i < 4; i++) {
-            NSDictionary *p = presets[i];
-            UIButton *pb = mkBtn(p[@"t"], p[@"c"], [UIColor whiteColor], 11);
-            pb.frame = CGRectMake(12 + (i % 2) * (pw + 12), 54 + (i / 2) * 30, pw, 26);
-            int32_t val = [p[@"v"] intValue];
-            [pb addAction:[UIAction actionWithHandler:^(UIAction *act) {
-                writeCameraHeight(val);
-                g_output.text = readAll();
-            }] forControlEvents:UIControlEventTouchUpInside];
-            [camBox addSubview:pb];
-        }
-
-        y += 134;
-
-        /* ── OUTPUT SECTION ── */
-        UILabel *outSec = mkSec(@"运行状态");
-        outSec.frame = CGRectMake(pad, y, cw, 16);
-        [content addSubview:outSec];
-        y += 20;
-
-        CGFloat oh = 200.0;
-        g_output = [[UITextView alloc] initWithFrame:CGRectMake(pad, y, cw, oh)];
-        g_output.backgroundColor = [UIColor colorWithWhite:0.0 alpha:0.38];
-        g_output.textColor = [UIColor colorWithRed:0.62 green:0.94 blue:0.72 alpha:1.0];
-        g_output.font = [UIFont fontWithName:@"Menlo" size:10];
-        g_output.editable = NO;
-        g_output.text = @"";
-        g_output.layer.cornerRadius = 12;
-        g_output.layer.borderWidth = 1;
-        g_output.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.06].CGColor;
-        g_output.textContainerInset = UIEdgeInsetsMake(8, 10, 8, 10);
-        [content addSubview:g_output];
-        y += oh + 16.0;
-        content.frame = CGRectMake(0, 0, w, MAX(720.0, y + pad));
+        UILabel *hint = [[UILabel alloc] initWithFrame:CGRectMake(pad, y, cw, 44)];
+        hint.text = @"透视模式用于日常使用；调试模式用于确认小野怪和视野外位置数据。\n详细结果写入 gamehack_logs/runtime.log 与 esp.log。";
+        hint.numberOfLines = 0;
+        hint.textColor = [UIColor colorWithWhite:0.68 alpha:1.0];
+        hint.font = [UIFont systemFontOfSize:10];
+        [content addSubview:hint];
+        y += 54.0;
+        content.frame = CGRectMake(0, 0, w, MAX(220.0, y + pad));
         scroll.contentSize = CGSizeMake(w, CGRectGetHeight(content.frame));
 
-
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 3000 * NSEC_PER_MSEC),
-            dispatch_get_main_queue(), ^{
-                g_output.text = readAll();
-            });
         g_hud.hidden = NO;
     });
 }
@@ -1252,6 +1091,124 @@ static BOOL readObjectPosition(Il2CppObject *object, Il2CppVector3 *outPosition)
     return tryTransformPosition(object, objectClass, outPosition);
 }
 
+typedef struct {
+    uint32_t actorID;
+    Il2CppVector3 position;
+} RuntimeDisplayRecord;
+
+static BOOL readUInt32Field(Il2CppObject *object, size_t offset, uint32_t *outValue) {
+    if (outValue) *outValue = 0;
+    if (!object || !outValue) return NO;
+    return readProcessBytes((uintptr_t)object + offset, outValue, sizeof(*outValue));
+}
+
+static int g_displayLayout = -1;
+static BOOL g_displayCacheLogged = NO;
+static NSTimeInterval g_lastDisplayCacheLog = 0.0;
+
+static BOOL readDisplayCache(RuntimeDisplayRecord *records, int capacity, int *outCount) {
+    if (outCount) *outCount = 0;
+    if (!records || capacity <= 0 || !initIl2CppAPI() ||
+        !p_il2cpp_runtime_invoke || !p_il2cpp_object_unbox) return NO;
+    void *baseImage = findIl2CppImageNamed("Scripts.Base.dll");
+    void *sgwClass = baseImage && p_il2cpp_class_from_name
+        ? p_il2cpp_class_from_name(baseImage, "", "SGW") : NULL;
+    const Il2CppMethodInfo *getData = resolveMethod(sgwClass, "GetDisplayData", 0);
+    const Il2CppMethodInfo *getCount = resolveMethod(sgwClass, "GetDisplayData_Count", 0);
+    if (!getData || !getCount) {
+        runtimeLogOnce(&g_displayCacheLogged, @"display cache unresolved class=SGW methods=0");
+        return NO;
+    }
+
+    Il2CppException *exception = NULL;
+    Il2CppObject *boxedCount = invokeMethod(getCount, NULL, NULL, &exception);
+    void *countRaw = (!exception && boxedCount) ? p_il2cpp_object_unbox(boxedCount) : NULL;
+    uint32_t countValue = 0;
+    if (!countRaw || !readProcessBytes((uintptr_t)countRaw, &countValue, sizeof(countValue))) return NO;
+    if (countValue == 0 || countValue > 4096) return NO;
+
+    exception = NULL;
+    Il2CppObject *boxedData = invokeMethod(getData, NULL, NULL, &exception);
+    void *dataRaw = (!exception && boxedData) ? p_il2cpp_object_unbox(boxedData) : NULL;
+    uintptr_t dataAddress = 0;
+    if (!dataRaw || !readProcessBytes((uintptr_t)dataRaw, &dataAddress, sizeof(dataAddress)) || !dataAddress) {
+        runtimeLogOnce(&g_displayCacheLogged, [NSString stringWithFormat:
+            @"display cache pointer unresolved count=%u boxed=0x%lx exception=0x%lx",
+            countValue, (uintptr_t)boxedData, (uintptr_t)exception]);
+        return NO;
+    }
+
+    struct Layout { size_t actorOffset; size_t positionOffset; size_t stride; };
+    /* Dump-confirmed DisplayInfoData fields: actorID=0x08, position=0x18.
+       Native stride is not exposed by the dump, so keep only aligned candidates. */
+    static const struct Layout layouts[] = {
+        { 0x08, 0x18, 0x40 }, { 0x08, 0x18, 0x48 }, { 0x08, 0x18, 0x3C }
+    };
+    if (g_displayLayout < 0) {
+        int bestScore = -1;
+        for (NSUInteger li = 0; li < sizeof(layouts) / sizeof(layouts[0]); li++) {
+            int score = 0;
+            int sampleCount = (int)MIN(countValue, 64U);
+            for (int i = 0; i < sampleCount; i++) {
+                uintptr_t item = dataAddress + layouts[li].stride * (size_t)i;
+                uint32_t actorID = 0;
+                Il2CppVector3 position = {0, 0, 0};
+                if (!readProcessBytes(item + layouts[li].actorOffset, &actorID, sizeof(actorID)) ||
+                    !readProcessBytes(item + layouts[li].positionOffset, &position, sizeof(position))) continue;
+                if (actorID > 0 && actorID < 100000000U) score++;
+                if (isPlausibleWorldVector(position)) score++;
+            }
+            if (score > bestScore) { bestScore = score; g_displayLayout = (int)li; }
+        }
+        if (g_displayLayout < 0 || bestScore < 2) {
+            g_displayLayout = -2;
+            runtimeLogOnce(&g_displayCacheLogged, [NSString stringWithFormat:
+                @"display cache rejected layout score=%d count=%u data=0x%lx",
+                bestScore, countValue, dataAddress]);
+            return NO;
+        }
+        runtimeLog([NSString stringWithFormat:
+            @"display cache layout=%d actorOffset=0x%lx positionOffset=0x%lx stride=0x%lx count=%u data=0x%lx",
+            g_displayLayout, layouts[g_displayLayout].actorOffset,
+            layouts[g_displayLayout].positionOffset, layouts[g_displayLayout].stride,
+            countValue, dataAddress]);
+    }
+
+    if (g_displayLayout < 0 || g_displayLayout >= (int)(sizeof(layouts) / sizeof(layouts[0]))) return NO;
+    const struct Layout layout = layouts[g_displayLayout];
+    int actualCount = (int)MIN(countValue, (uint32_t)capacity);
+    int valid = 0;
+    for (int i = 0; i < actualCount; i++) {
+        uintptr_t item = dataAddress + layout.stride * (size_t)i;
+        RuntimeDisplayRecord record = {0};
+        if (!readProcessBytes(item + layout.actorOffset, &record.actorID, sizeof(record.actorID)) ||
+            !readProcessBytes(item + layout.positionOffset, &record.position, sizeof(record.position))) continue;
+        if (record.actorID == 0 || !isPlausibleWorldVector(record.position)) continue;
+        records[valid++] = record;
+    }
+    if (outCount) *outCount = valid;
+    NSTimeInterval now = [NSDate timeIntervalSinceReferenceDate];
+    if (g_lastDisplayCacheLog <= 0.0 || now - g_lastDisplayCacheLog >= 5.0) {
+        g_lastDisplayCacheLog = now;
+        runtimeLog([NSString stringWithFormat:
+            @"display cache sample count=%u valid=%d layout=%d data=0x%lx",
+            countValue, valid, g_displayLayout, dataAddress]);
+    }
+    return valid > 0;
+}
+
+static BOOL findDisplayPosition(const RuntimeDisplayRecord *records, int count,
+                                uint32_t actorID, Il2CppVector3 *outPosition) {
+    if (!records || count <= 0 || !actorID || !outPosition) return NO;
+    for (int i = 0; i < count; i++) {
+        if (records[i].actorID == actorID) {
+            *outPosition = records[i].position;
+            return YES;
+        }
+    }
+    return NO;
+}
+
 static Il2CppObject *g_projectionCamera = NULL;
 static const Il2CppMethodInfo *g_worldToScreenMethod = NULL;
 
@@ -1450,11 +1407,12 @@ static float g_lastUnityViewportHeight = 0.0f;
 
 typedef struct {
     Il2CppObject *object;
+    uint32_t actorID;
     char displayName[128];
     char namespaceName[96];
 } ActorPositionRef50;
 
-static ActorPositionRef50 g_actorPositionRefs50[64];
+static ActorPositionRef50 g_actorPositionRefs50[512];
 static int g_actorPositionRefCount50 = 0;
 static int g_positionRefreshValid50 = 0;
 static uint64_t g_positionRefreshCount = 0;
@@ -1659,10 +1617,38 @@ static BOOL isUsableActorScreen(Il2CppVector3 screen) {
     return isfinite(screen.x) && isfinite(screen.y) && isfinite(screen.z) && screen.z > 0.0f;
 }
 
-static BOOL appendActorPositionSnapshot(const ActorPositionRef50 *ref) {
+static int appendDisplayCacheSnapshot(const RuntimeDisplayRecord *records, int count,
+                                      int capacity) {
+    if (!records || count <= 0 || capacity <= 0) return 0;
+    int valid = 0;
+    for (int i = 0; i < count && valid < capacity; i++) {
+        Il2CppVector3 screen = {-1, -1, -1};
+        if (!isUsableActorWorld(records[i].position) ||
+            !projectWorldPosition(records[i].position, &screen) ||
+            !isUsableActorScreen(screen)) continue;
+        char label[96] = {0};
+        snprintf(label, sizeof(label), "Display[%u]", records[i].actorID);
+        espAppendEntitySnapshot(records[i].position.x, records[i].position.y,
+                                records[i].position.z, screen.x, screen.y, screen.z,
+                                label, "SGW");
+        valid++;
+    }
+    return valid;
+}
+
+static BOOL appendActorPositionSnapshot(const ActorPositionRef50 *ref,
+                                        const RuntimeDisplayRecord *displayRecords,
+                                        int displayCount) {
     if (!ref || !ref->object) return NO;
     Il2CppVector3 world = {0, 0, 0};
-    if (!readObjectPosition(ref->object, &world) || !isUsableActorWorld(world)) return NO;
+    BOOL positionOK = NO;
+    /* A display-cache match is accepted only for a non-zero actor ID.  If the
+       cache was rejected or has no matching record, retain the verified
+       ActorLinker/Transform path instead of substituting an unrelated record. */
+    if (ref->actorID) positionOK = findDisplayPosition(displayRecords, displayCount,
+                                                        ref->actorID, &world);
+    if (!positionOK) positionOK = readObjectPosition(ref->object, &world);
+    if (!positionOK || !isUsableActorWorld(world)) return NO;
     Il2CppVector3 screen = {-1, -1, -1};
     if (!projectWorldPosition(world, &screen) || !isUsableActorScreen(screen)) return NO;
     espAppendEntitySnapshot(world.x, world.y, world.z,
@@ -1688,10 +1674,21 @@ static void refreshActorSnapshotPositions(void) {
         }
     }
 
+    RuntimeDisplayRecord displayRecords[512] = {0};
+    int displayCount = 0;
+    readDisplayCache(displayRecords, 512, &displayCount);
+
     espBeginEntitySnapshot();
     int valid = 0;
-    for (int i = 0; i < g_actorPositionRefCount50 && valid < 50; i++) {
-        if (appendActorPositionSnapshot(&g_actorPositionRefs50[i])) valid++;
+    int limit = g_espDebugMode ? 512 : 50;
+    if (g_espDebugMode && displayCount > 0) {
+        valid = appendDisplayCacheSnapshot(displayRecords, displayCount, limit);
+    }
+    if (!g_espDebugMode || valid == 0) {
+        for (int i = 0; i < g_actorPositionRefCount50 && valid < limit; i++) {
+            if (appendActorPositionSnapshot(&g_actorPositionRefs50[i], displayRecords,
+                                            displayCount)) valid++;
+        }
     }
     espCommitEntitySnapshot();
     g_positionRefreshValid50 = valid;
@@ -1721,9 +1718,10 @@ static void cacheActorPositionRef50(Il2CppObject *actor, const char *displayName
     for (int i = 0; i < g_actorPositionRefCount50; i++) {
         if (g_actorPositionRefs50[i].object == actor) return;
     }
-    if (g_actorPositionRefCount50 >= 64) return;
+    if (g_actorPositionRefCount50 >= 512) return;
     ActorPositionRef50 *ref = &g_actorPositionRefs50[g_actorPositionRefCount50++];
     ref->object = actor;
+    readUInt32Field(actor, 0x4AC, &ref->actorID);
     if (displayName) strncpy(ref->displayName, displayName, sizeof(ref->displayName) - 1);
     if (namespaceName) strncpy(ref->namespaceName, namespaceName, sizeof(ref->namespaceName) - 1);
 }
@@ -1762,7 +1760,8 @@ static int appendSupplementalActorList(void *actorClass, Il2CppObject *actorMana
     static BOOL itemTypeLogged[3] = { NO, NO, NO };
     int itemTypeSlot = strcmp(sourceName, "CallMonster") == 0 ? 0 :
         (strcmp(sourceName, "CallActor") == 0 ? 1 : 2);
-    for (int index = 0; index < count && *valid < 50; index++) {
+    int supplementalLimit = g_espDebugMode ? 512 : 50;
+    for (int index = 0; index < count && *valid < supplementalLimit; index++) {
         int32_t indexValue = index;
         void *params[1] = { &indexValue };
         exception = NULL;
@@ -1824,12 +1823,16 @@ static void probeActorSnapshot50(void *actorClass, Il2CppObject *actorManager) {
         return;
     }
     updateProjectionViewport();
+    RuntimeDisplayRecord displayRecords[512] = {0};
+    int displayCount = 0;
+    readDisplayCache(displayRecords, 512, &displayCount);
     espBeginEntitySnapshot();
     char signature[512] = {0};
     size_t signatureUsed = 0;
     char geometry[1024] = {0};
     size_t geometryUsed = 0;
-    for (NSUInteger source = 0; source < 5 && g_actorSnapshot50Valid < 50; source++) {
+    int snapshotLimit = g_espDebugMode ? 512 : 50;
+    for (NSUInteger source = 0; source < 5 && g_actorSnapshot50Valid < snapshotLimit; source++) {
         const Il2CppMethodInfo *countMethod = resolveMethod(actorClass, countNames[source], 0);
         const Il2CppMethodInfo *itemMethod = resolveMethod(actorClass, itemNames[source], 1);
         if (!countMethod || !itemMethod) continue;
@@ -1837,7 +1840,7 @@ static void probeActorSnapshot50(void *actorClass, Il2CppObject *actorManager) {
         int sourceCount = readBoxedIntResult(countMethod, actorManager, NULL, &countOK);
         if (!countOK || sourceCount <= 0) continue;
         if (sourceCount > 64) sourceCount = 64;
-        for (int index = 0; index < sourceCount && g_actorSnapshot50Valid < 50; index++) {
+        for (int index = 0; index < sourceCount && g_actorSnapshot50Valid < snapshotLimit; index++) {
             int32_t indexValue = index;
             void *params[1] = { &indexValue };
             Il2CppException *exception = NULL;
@@ -1848,16 +1851,21 @@ static void probeActorSnapshot50(void *actorClass, Il2CppObject *actorManager) {
             char namespaceName[96] = {0};
             readObjectClassName(actor, className, sizeof(className), namespaceName, sizeof(namespaceName));
             Il2CppVector3 world = {0, 0, 0};
-            if (!readObjectPosition(actor, &world) || !isUsableActorWorld(world)) continue;
+            uint32_t actorID = 0;
+            readUInt32Field(actor, 0x4AC, &actorID);
+            BOOL positionOK = actorID && findDisplayPosition(displayRecords, displayCount, actorID, &world);
+            if (!positionOK) positionOK = readObjectPosition(actor, &world);
+            if (!positionOK || !isUsableActorWorld(world)) continue;
             Il2CppVector3 screen = {-1, -1, -1};
             BOOL screenOK = projectWorldPosition(world, &screen) && isUsableActorScreen(screen);
 
             char displayName[96] = {0};
             snprintf(displayName, sizeof(displayName), "%s[%d] %s", sourceNames[source], index,
                      className[0] ? className : "Actor");
-            if (g_actorPositionRefCount50 < 64) {
+            if (g_actorPositionRefCount50 < 512) {
                 ActorPositionRef50 *ref = &g_actorPositionRefs50[g_actorPositionRefCount50++];
                 ref->object = actor;
+                ref->actorID = actorID;
                 strncpy(ref->displayName, displayName, sizeof(ref->displayName) - 1);
                 strncpy(ref->namespaceName, namespaceName, sizeof(ref->namespaceName) - 1);
             }
