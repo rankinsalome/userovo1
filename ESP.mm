@@ -17,6 +17,10 @@ static os_log_t g_espLog;
 static uint64_t g_espTicks = 0;
 static uint64_t g_lastDiagnosticMs = 0;
 
+typedef struct { Vec3 pos; float hp,maxHp; int team; bool ok; } EEnt;
+EEnt g_ents[64];
+int g_entCnt=0;
+
 extern uintptr_t unityBase;
 extern bool g_mapHackEnabled;
 extern bool g_mapHackInstalled;
@@ -65,10 +69,6 @@ Vec3 W2S(Vec3 w, M4x4 v, M4x4 p, float sw, float sh) {
     r.z=cz/cw;
     return r;
 }
-
-typedef struct { Vec3 pos; float hp,maxHp; int team; bool ok; } EEnt;
-EEnt g_ents[64];
-int g_entCnt=0;
 
 void updateESPMatrices(void) {
     g_matValid=false;
