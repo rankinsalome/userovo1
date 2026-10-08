@@ -847,6 +847,74 @@ static BOOL isReadableExecutablePointer(void *ptr) {
     return p >= base && p < base + 0x30000000ULL;
 }
 
+static void probeEntityManagers(void) {
+    if (!initIl2CppAPI() || !p_il2cpp_runtime_invoke) {
+        runtimeLog(@"entity manager probe skipped: IL2CPP invoke unavailable");
+        return;
+    }
+    void *domain = p_il2cpp_domain_get();
+    size_t count = 0;
+    const void **assemblies = domain ? p_il2cpp_domain_get_assemblies(domain, &count) : NULL;
+    if (!assemblies || count == 0 || count > 4096) {
+        runtimeLog(@"entity manager probe skipped: assemblies unavailable");
+        return;
+    }
+    void *gameCoreImage = NULL;
+    for (size_t i = 0; i < count; i++) {
+        void *image = assemblies[i] ? p_il2cpp_assembly_get_image(assemblies[i]) : NULL;
+        const char *name = image ? p_il2cpp_image_get_name(image) : NULL;
+        if (name && strcmp(name, "Scripts.GameCore.dll") == 0) {
+            gameCoreImage = image;
+            break;
+        }
+    }
+    if (!gameCoreImage) {
+        runtimeLog(@"entity manager probe skipped: Scripts.GameCore image not found");
+        return;
+    }
+
+    struct ManagerProbe { const char *ns; const char *name; const char *getter; } probes[] = {
+        { "Assets.Scripts.GameLogic", "ActorManager", "get_instance" },
+        { "Assets.Scripts.GameLogic", "GamePlayerCenter", "get_instance" }
+    };
+    for (size_t i = 0; i < sizeof(probes) / sizeof(probes[0]); i++) {
+        void *klass = p_il2cpp_class_from_name(gameCoreImage, probes[i].ns, probes[i].name);
+        const Il2CppMethodInfo *getter = klass ?
+            p_il2cpp_class_get_method_from_name(klass, probes[i].getter, 0) : NULL;
+        if (!klass || !getter) {
+            runtimeLog([NSString stringWithFormat:@"entity manager unresolved class=%s method=%s",
+                probes[i].name, probes[i].getter]);
+            continue;
+        }
+        Il2CppException *exception = NULL;
+        Il2CppObject *manager = p_il2cpp_runtime_invoke(getter, NULL, NULL, &exception);
+        runtimeLog([NSString stringWithFormat:@"entity manager result class=%s object=0x%lx exception=0x%lx",
+            probes[i].name, (uintptr_t)manager, (uintptr_t)exception]);
+        if (!manager || exception) continue;
+
+        const char *countMethodName = strcmp(probes[i].name, "ActorManager") == 0 ?
+            "GetActorTotalCount" : "GetPlayerNum";
+        const Il2CppMethodInfo *countMethod =
+            p_il2cpp_class_get_method_from_name(klass, countMethodName, 0);
+        if (!countMethod) {
+            runtimeLog([NSString stringWithFormat:@"entity manager count unresolved class=%s method=%s",
+                probes[i].name, countMethodName]);
+            continue;
+        }
+        exception = NULL;
+        Il2CppObject *boxedCount = p_il2cpp_runtime_invoke(countMethod, manager, NULL, &exception);
+        runtimeLog([NSString stringWithFormat:@"entity manager count result class=%s boxed=0x%lx exception=0x%lx",
+            probes[i].name, (uintptr_t)boxedCount, (uintptr_t)exception]);
+        if (boxedCount && !exception && p_il2cpp_object_unbox) {
+            int32_t *value = (int32_t *)p_il2cpp_object_unbox(boxedCount);
+            if (value) {
+                runtimeLog([NSString stringWithFormat:@"entity manager count value class=%s count=%d",
+                    probes[i].name, *value]);
+            }
+        }
+    }
+}
+
 static void probeMainCameraGetter(void) {
     if (!initIl2CppAPI()) return;
     if (!p_il2cpp_runtime_invoke) {
@@ -990,6 +1058,7 @@ static const Il2CppMethodInfo* resolveIl2CppMethod(const char* ns, const char* k
         enumerateIl2CppAssemblies();
         enumerateTargetClasses();
         probeMainCameraGetter();
+        probeEntityManagers();
         // Hooks installed on-demand by button press (not at startup)
         showHUD();
     });
