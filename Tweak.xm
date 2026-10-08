@@ -678,28 +678,75 @@ static void showHUD(void) {
 }
 
 /* ── IL2CPP runtime function typedefs ── */
+typedef void* (*il2cpp_domain_get_t)(void);
+typedef const void** (*il2cpp_domain_get_assemblies_t)(void* domain, size_t* size);
+typedef void* (*il2cpp_assembly_get_image_t)(const void* assembly);
+typedef const char* (*il2cpp_image_get_name_t)(const void* image);
+typedef const char* (*il2cpp_image_get_filename_t)(const void* image);
 typedef void* (*il2cpp_class_from_name_t)(void* image, const char* ns, const char* name);
 typedef struct { void* methodPointer; uint8_t _pad[48]; } Il2CppMethodInfo;
 typedef Il2CppMethodInfo* (*il2cpp_class_get_method_from_name_t)(void* klass, const char* name, int args);
 
+il2cpp_domain_get_t p_il2cpp_domain_get = NULL;
+il2cpp_domain_get_assemblies_t p_il2cpp_domain_get_assemblies = NULL;
+il2cpp_assembly_get_image_t p_il2cpp_assembly_get_image = NULL;
+il2cpp_image_get_name_t p_il2cpp_image_get_name = NULL;
+il2cpp_image_get_filename_t p_il2cpp_image_get_filename = NULL;
 il2cpp_class_from_name_t p_il2cpp_class_from_name = NULL;
 il2cpp_class_get_method_from_name_t p_il2cpp_class_get_method_from_name = NULL;
 
 bool initIl2CppAPI(void) {
-    if (p_il2cpp_class_from_name && p_il2cpp_class_get_method_from_name)
+    if (p_il2cpp_domain_get && p_il2cpp_domain_get_assemblies &&
+        p_il2cpp_assembly_get_image && p_il2cpp_image_get_name &&
+        p_il2cpp_class_from_name && p_il2cpp_class_get_method_from_name)
         return true;
 
+    p_il2cpp_domain_get = (il2cpp_domain_get_t)dlsym(RTLD_DEFAULT, "il2cpp_domain_get");
+    p_il2cpp_domain_get_assemblies = (il2cpp_domain_get_assemblies_t)dlsym(RTLD_DEFAULT, "il2cpp_domain_get_assemblies");
+    p_il2cpp_assembly_get_image = (il2cpp_assembly_get_image_t)dlsym(RTLD_DEFAULT, "il2cpp_assembly_get_image");
+    p_il2cpp_image_get_name = (il2cpp_image_get_name_t)dlsym(RTLD_DEFAULT, "il2cpp_image_get_name");
+    p_il2cpp_image_get_filename = (il2cpp_image_get_filename_t)dlsym(RTLD_DEFAULT, "il2cpp_image_get_filename");
     p_il2cpp_class_from_name = (il2cpp_class_from_name_t)dlsym(RTLD_DEFAULT, "il2cpp_class_from_name");
     p_il2cpp_class_get_method_from_name = (il2cpp_class_get_method_from_name_t)dlsym(RTLD_DEFAULT, "il2cpp_class_get_method_from_name");
 
-    if (!p_il2cpp_class_from_name || !p_il2cpp_class_get_method_from_name) {
-        NSLog(@"[GameHack] dlsym: il2cpp API not found in UnityFramework");
-        runtimeLog(@"il2cpp API unresolved via dlsym");
+    if (!p_il2cpp_domain_get || !p_il2cpp_domain_get_assemblies ||
+        !p_il2cpp_assembly_get_image || !p_il2cpp_image_get_name ||
+        !p_il2cpp_class_from_name || !p_il2cpp_class_get_method_from_name) {
+        runtimeLog([NSString stringWithFormat:@"il2cpp API incomplete domain=%d assemblies=%d image=%d name=%d filename=%d class=%d method=%d",
+            p_il2cpp_domain_get != NULL, p_il2cpp_domain_get_assemblies != NULL,
+            p_il2cpp_assembly_get_image != NULL, p_il2cpp_image_get_name != NULL,
+            p_il2cpp_image_get_filename != NULL, p_il2cpp_class_from_name != NULL,
+            p_il2cpp_class_get_method_from_name != NULL]);
         return false;
     }
-    NSLog(@"[GameHack] il2cpp API resolved via dlsym");
     runtimeLog(@"il2cpp API resolved via dlsym");
     return true;
+}
+
+static void enumerateIl2CppAssemblies(void) {
+    if (!initIl2CppAPI()) return;
+    void *domain = p_il2cpp_domain_get();
+    if (!domain) {
+        runtimeLog(@"il2cpp domain is null");
+        return;
+    }
+    size_t count = 0;
+    const void **assemblies = p_il2cpp_domain_get_assemblies(domain, &count);
+    runtimeLog([NSString stringWithFormat:@"il2cpp assemblies count=%lu", (unsigned long)count]);
+    if (!assemblies || count == 0 || count > 4096) {
+        runtimeLog(@"il2cpp assemblies unavailable or count out of range");
+        return;
+    }
+    for (size_t i = 0; i < count; i++) {
+        const void *assembly = assemblies[i];
+        void *image = assembly ? p_il2cpp_assembly_get_image(assembly) : NULL;
+        const char *name = image ? p_il2cpp_image_get_name(image) : NULL;
+        const char *filename = (image && p_il2cpp_image_get_filename) ? p_il2cpp_image_get_filename(image) : NULL;
+        if (name && name[0]) {
+            runtimeLog([NSString stringWithFormat:@"il2cpp image[%lu] name=%s file=%s",
+                (unsigned long)i, name, filename ? filename : ""]);
+        }
+    }
 }
 
 static void* resolveIl2CppMethod(const char* ns, const char* klassName, const char* methodName, int args) {
@@ -737,6 +784,7 @@ static void* resolveIl2CppMethod(const char* ns, const char* klassName, const ch
         }
         NSLog(@"[GameHack] UnityFramework base: 0x%lx", unityBase);
         runtimeLog([NSString stringWithFormat:@"UnityFramework base=0x%lx", unityBase]);
+        enumerateIl2CppAssemblies();
         // Hooks installed on-demand by button press (not at startup)
         showHUD();
     });
