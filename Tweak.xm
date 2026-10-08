@@ -11,7 +11,8 @@ static os_log_t g_runtimeLog;
 
 static NSString *gamehackDocumentsLogPath(NSString *name) {
     NSArray *paths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
-    NSString *documents = paths.firstObject.length ? paths.firstObject : NSTemporaryDirectory();
+    NSString *documentsCandidate = (NSString *)[paths firstObject];
+    NSString *documents = [documentsCandidate length] ? documentsCandidate : NSTemporaryDirectory();
     NSString *dir = [documents stringByAppendingPathComponent:@"gamehack_logs"];
     [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:NULL];
     return [dir stringByAppendingPathComponent:name];
@@ -340,7 +341,8 @@ static NSString *readAll(void) {
     [s appendFormat:@"MapHack        %s\n", g_mapHackEnabled ? "ON" : "OFF"];
     [s appendFormat:@"VisualFog      %s\n", g_fogDisabled ? "CLEAR" : "标准"];
     NSArray *documentsPaths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
-    NSString *documents = documentsPaths.firstObject.length ? documentsPaths.firstObject : NSTemporaryDirectory();
+    NSString *documentsCandidate = (NSString *)[documentsPaths firstObject];
+    NSString *documents = [documentsCandidate length] ? documentsCandidate : NSTemporaryDirectory();
     NSString *logDir = [documents stringByAppendingPathComponent:@"gamehack_logs"];
     [s appendString:@"\n-- RUNTIME PROBES --\nESP matrices   UNRESOLVED (no verified CameraSystem instance)\nESP entities   UNRESOLVED (no verified ActorManager instance)\n"];
     [s appendFormat:@"ESP log         %@\nRuntime log     %@\n", [logDir stringByAppendingPathComponent:@"esp.log"], [logDir stringByAppendingPathComponent:@"runtime.log"]];
