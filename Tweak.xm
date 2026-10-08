@@ -11,7 +11,11 @@ static os_log_t g_runtimeLog;
 static void runtimeLog(NSString *message) {
     if (!g_runtimeLog) g_runtimeLog = os_log_create("gamehack", "runtime");
     os_log(g_runtimeLog, "%{public}@", message ?: @"");
-    NSString *path = @"/var/mobile/Library/Logs/gamehack-runtime.log";
+    NSString *dir = @"/var/mobile/Library/Logs/gamehack";
+    NSString *path = [dir stringByAppendingPathComponent:@"runtime.log"];
+    NSError *dirError = nil;
+    [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:&dirError];
+    if (dirError) { os_log(g_runtimeLog, "log directory error: %{public}@", dirError); return; }
     NSString *line = [NSString stringWithFormat:@"%@ %@\n", [NSDate date], message ?: @""];
     NSData *data = [line dataUsingEncoding:NSUTF8StringEncoding];
     if (![[NSFileManager defaultManager] fileExistsAtPath:path])
@@ -78,6 +82,21 @@ static bool hook_get_bVisible(void *self) {
 - (void)onBallTap:(UITapGestureRecognizer *)g;
 @end
 @implementation HUDWindow
+
+- (void)layoutSubviews {
+    [super layoutSubviews];
+    [self clampBallToBounds];
+    if (self.panelView && !self.panelView.hidden) {
+        CGFloat w = self.panelView.bounds.size.width;
+        CGFloat h = self.panelView.bounds.size.height;
+        CGFloat maxW = self.bounds.size.width - 16.0;
+        CGFloat maxH = self.bounds.size.height - 40.0;
+        if (w > maxW || h > maxH) {
+            self.panelView.bounds = CGRectMake(0, 0, MIN(w, maxW), MIN(h, maxH));
+        }
+        [self clampPanelToBounds];
+    }
+}
 
 /* Pass through all touches that don't hit ball or panel */
 - (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
@@ -272,7 +291,7 @@ static NSString *readAll(void) {
     [s appendString:@"\n-- STATE --\n"];
     [s appendFormat:@"MapHack        %s\n", g_mapHackEnabled ? "ON" : "OFF"];
     [s appendFormat:@"VisualFog      %s\n", g_fogDisabled ? "CLEAR" : "标准"];
-    [s appendString:@"\n-- RUNTIME PROBES --\nESP matrices   UNRESOLVED (no verified CameraSystem instance)\nESP entities   UNRESOLVED (no verified ActorManager instance)\nESP log         /var/mobile/Library/Logs/gamehack-esp.log\nRuntime log     /var/mobile/Library/Logs/gamehack-runtime.log\n"];
+    [s appendString:@"\n-- RUNTIME PROBES --\nESP matrices   UNRESOLVED (no verified CameraSystem instance)\nESP entities   UNRESOLVED (no verified ActorManager instance)\nESP log         /var/mobile/Library/Logs/gamehack/esp.log\nRuntime log     /var/mobile/Library/Logs/gamehack/runtime.log\n"];
 
     return s;
 }
@@ -374,7 +393,7 @@ static void showHUD(void) {
         /* ── Panel (initially hidden, shown on ball tap) ── */
         g_panel = [[UIVisualEffectView alloc]
             initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleDark]];
-        g_panel.frame = CGRectMake(0, 0, w, h);
+        g_panel.frame = CGRectMake(0, 0, w, MIN(h, CGRectGetHeight(gb) - 40.0));
         g_panel.layer.cornerRadius = 22;
         g_panel.layer.masksToBounds = YES;
         g_panel.hidden = YES;
@@ -425,18 +444,29 @@ static void showHUD(void) {
         }] forControlEvents:UIControlEventTouchUpInside];
         [tb addSubview:close];
 
-        CGFloat y = 62.0;
+        UIScrollView *scroll = [[UIScrollView alloc] initWithFrame:CGRectMake(0, 50, w, g_panel.bounds.size.height - 50)];
+        scroll.alwaysBounceVertical = YES;
+        scroll.showsVerticalScrollIndicator = YES;
+        scroll.indicatorStyle = UIScrollViewIndicatorStyleWhite;
+        scroll.delaysContentTouches = NO;
+        [g_panel.contentView addSubview:scroll];
+        UIView *content = [[UIView alloc] initWithFrame:CGRectMake(0, 0, w, 720)];
+        content.backgroundColor = UIColor.clearColor;
+        [scroll addSubview:content];
+        scroll.contentSize = CGSizeMake(w, 720);
+
+        CGFloat y = 12.0;
 
         /* ── FOG OF WAR SECTION ── */
         UILabel *fogSec = mkSec(@"战争迷雾 / 地图透视");
         fogSec.frame = CGRectMake(pad, y, cw, 16);
-        [g_panel.contentView addSubview:fogSec];
+        [content addSubview:fogSec];
         y += 20;
 
         UIView *fogBox = [[UIView alloc] initWithFrame:CGRectMake(pad, y, cw, 88)];
         fogBox.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.04];
         fogBox.layer.cornerRadius = 14;
-        [g_panel.contentView addSubview:fogBox];
+        [content addSubview:fogBox];
 
         UIButton *btnMapHack = mkBtn(@"开启全图透视",
             [UIColor colorWithRed:0.22 green:0.65 blue:0.42 alpha:1.0],
@@ -511,19 +541,19 @@ static void showHUD(void) {
             }
             g_output.text = readAll();
         }] forControlEvents:UIControlEventTouchUpInside];
-        [g_panel.contentView addSubview:btnESP];
+        [content addSubview:btnESP];
         y += 44;
 
         /* ── CAMERA SECTION ── */
         UILabel *camSec = mkSec(@"镜头控制");
         camSec.frame = CGRectMake(pad, y, cw, 16);
-        [g_panel.contentView addSubview:camSec];
+        [content addSubview:camSec];
         y += 20;
 
         UIView *camBox = [[UIView alloc] initWithFrame:CGRectMake(pad, y, cw, 122)];
         camBox.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.04];
         camBox.layer.cornerRadius = 14;
-        [g_panel.contentView addSubview:camBox];
+        [content addSubview:camBox];
 
         UIButton *btnRead = mkBtn(@"读取内存状态",
             [UIColor colorWithRed:0.28 green:0.48 blue:0.92 alpha:1.0],
@@ -564,10 +594,10 @@ static void showHUD(void) {
         /* ── OUTPUT SECTION ── */
         UILabel *outSec = mkSec(@"运行状态");
         outSec.frame = CGRectMake(pad, y, cw, 16);
-        [g_panel.contentView addSubview:outSec];
+        [content addSubview:outSec];
         y += 20;
 
-        CGFloat oh = h - y - pad;
+        CGFloat oh = 200.0;
         g_output = [[UITextView alloc] initWithFrame:CGRectMake(pad, y, cw, oh)];
         g_output.backgroundColor = [UIColor colorWithWhite:0.0 alpha:0.38];
         g_output.textColor = [UIColor colorWithRed:0.62 green:0.94 blue:0.72 alpha:1.0];
@@ -578,7 +608,10 @@ static void showHUD(void) {
         g_output.layer.borderWidth = 1;
         g_output.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.06].CGColor;
         g_output.textContainerInset = UIEdgeInsetsMake(8, 10, 8, 10);
-        [g_panel.contentView addSubview:g_output];
+        [content addSubview:g_output];
+        y += oh + 16.0;
+        content.frame = CGRectMake(0, 0, w, MAX(720.0, y + pad));
+        scroll.contentSize = CGSizeMake(w, CGRectGetHeight(content.frame));
 
 
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 3000 * NSEC_PER_MSEC),

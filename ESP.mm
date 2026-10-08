@@ -31,13 +31,20 @@ static void espLog(NSString *message) {
 }
 
 static NSString *espLogPath(void) {
-    return @"/var/mobile/Library/Logs/gamehack-esp.log";
+    return @"/var/mobile/Library/Logs/gamehack/esp.log";
 }
 
 static void appendESPLog(NSString *message) {
     NSString *line = [NSString stringWithFormat:@"%@ %@\n", [NSDate date], message ?: @""];
     NSData *data = [line dataUsingEncoding:NSUTF8StringEncoding];
     NSString *path = espLogPath();
+    NSString *dir = [path stringByDeletingLastPathComponent];
+    NSError *dirError = nil;
+    [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:&dirError];
+    if (dirError) {
+        NSLog(@"[GameHack] ESP log directory error: %@", dirError);
+        return;
+    }
     if (![[NSFileManager defaultManager] fileExistsAtPath:path]) {
         [[NSFileManager defaultManager] createFileAtPath:path contents:data attributes:nil];
     } else {
