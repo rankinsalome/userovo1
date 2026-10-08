@@ -915,16 +915,38 @@ static void probeEntityManagers(void) {
     }
 }
 
+static const NSTimeInterval kEntitySamplingDuration = 120.0;
+static const NSTimeInterval kEntitySamplingInterval = 2.0;
 static int g_entitySample = 0;
 static bool g_entitySampling = false;
+static bool g_entitySamplingActive = false;
+static NSTimeInterval g_entitySamplingStartedAt = 0.0;
 
 static void scheduleNextEntityManagerSample(void);
 
+static NSTimeInterval entitySamplingElapsed(void) {
+    if (g_entitySamplingStartedAt <= 0.0) return 0.0;
+    return MAX(0.0, [NSDate timeIntervalSinceReferenceDate] - g_entitySamplingStartedAt);
+}
+
+static void finishEntityManagerSampling(NSString *reason) {
+    if (!g_entitySamplingActive) return;
+    g_entitySamplingActive = false;
+    runtimeLog([NSString stringWithFormat:
+        @"entity manager sampling finished samples=%d elapsed=%.1fs reason=%@",
+        g_entitySample, entitySamplingElapsed(), reason ?: @"unknown"]);
+}
+
 static void runEntityManagerSample(void) {
-    if (g_entitySampling) return;
+    if (!g_entitySamplingActive || g_entitySampling) return;
+    if (entitySamplingElapsed() >= kEntitySamplingDuration) {
+        finishEntityManagerSampling(@"duration");
+        return;
+    }
     g_entitySampling = true;
     int sample = ++g_entitySample;
-    runtimeLog([NSString stringWithFormat:@"entity manager sample=%d", sample]);
+    runtimeLog([NSString stringWithFormat:@"entity manager sample=%d elapsed=%.1fs",
+        sample, entitySamplingElapsed()]);
     @try {
         probeEntityManagers();
     } @catch (NSException *exception) {
@@ -932,20 +954,36 @@ static void runEntityManagerSample(void) {
             exception.reason ?: @"unknown"]);
     }
     g_entitySampling = false;
-    if (g_entitySample < 8) scheduleNextEntityManagerSample();
-    else runtimeLog(@"entity manager sampling finished");
+    if (entitySamplingElapsed() >= kEntitySamplingDuration) {
+        finishEntityManagerSampling(@"duration");
+    } else {
+        scheduleNextEntityManagerSample();
+    }
 }
 
 static void scheduleNextEntityManagerSample(void) {
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC),
+    if (!g_entitySamplingActive) return;
+    NSTimeInterval remaining = kEntitySamplingDuration - entitySamplingElapsed();
+    if (remaining <= 0.0) {
+        finishEntityManagerSampling(@"duration");
+        return;
+    }
+    NSTimeInterval delay = MIN(kEntitySamplingInterval, remaining);
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,
+                                  (int64_t)(delay * NSEC_PER_SEC)),
         dispatch_get_main_queue(), ^{
-            runEntityManagerSample();
+            if (g_entitySamplingActive) runEntityManagerSample();
         });
 }
 
 static void scheduleEntityManagerSampling(void) {
     g_entitySample = 0;
     g_entitySampling = false;
+    g_entitySamplingActive = true;
+    g_entitySamplingStartedAt = [NSDate timeIntervalSinceReferenceDate];
+    runtimeLog([NSString stringWithFormat:
+        @"entity manager sampling started duration=%.1fs interval=%.1fs",
+        kEntitySamplingDuration, kEntitySamplingInterval]);
     scheduleNextEntityManagerSample();
 }
 
