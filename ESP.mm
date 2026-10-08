@@ -1,6 +1,10 @@
 // ESP + MapHack - safe memory approach, no IL2CPP calls, no MSHookFunction
 #import <UIKit/UIKit.h>
 #import <substrate.h>
+#import <os/log.h>
+#import <sys/stat.h>
+#import <unistd.h>
+#include <math.h>
 
 typedef struct { float m[16]; } M4x4;
 typedef struct { float x, y, z; } Vec3;
@@ -9,10 +13,40 @@ bool g_espEnabled = false;
 M4x4 g_viewMat, g_projMat;
 bool g_matValid = false;
 UIWindow *g_espWin = nil;
+static os_log_t g_espLog;
+static uint64_t g_espTicks = 0;
+static uint64_t g_lastDiagnosticMs = 0;
 
 extern uintptr_t unityBase;
 extern bool g_mapHackEnabled;
 extern bool g_mapHackInstalled;
+
+static void espLog(NSString *message) {
+    if (!g_espLog) g_espLog = os_log_create("gamehack", "esp");
+    os_log(g_espLog, "%{public}@", message ?: @"");
+}
+
+static NSString *espLogPath(void) {
+    return @"/var/mobile/Library/Logs/gamehack-esp.log";
+}
+
+static void appendESPLog(NSString *message) {
+    NSString *line = [NSString stringWithFormat:@"%@ %@\n", [NSDate date], message ?: @""];
+    NSData *data = [line dataUsingEncoding:NSUTF8StringEncoding];
+    NSString *path = espLogPath();
+    if (![[NSFileManager defaultManager] fileExistsAtPath:path]) {
+        [[NSFileManager defaultManager] createFileAtPath:path contents:data attributes:nil];
+    } else {
+        NSFileHandle *h = [NSFileHandle fileHandleForWritingAtPath:path];
+        [h seekToEndOfFile]; [h writeData:data]; [h closeFile];
+    }
+    espLog(message);
+}
+
+static void logESPState(NSString *reason) {
+    appendESPLog([NSString stringWithFormat:@"state reason=%@ enabled=%d matValid=%d entityCount=%d unityBase=0x%lx mapHack=%d",
+        reason ?: @"unknown", g_espEnabled, g_matValid, g_entCnt, unityBase, g_mapHackInstalled]);
+}
 
 Vec3 W2S(Vec3 w, M4x4 v, M4x4 p, float sw, float sh) {
     float *vm=v.m,*pm=p.m;
@@ -38,10 +72,12 @@ int g_entCnt=0;
 
 void updateESPMatrices(void) {
     g_matValid=false;
+    appendESPLog(@"matrix probe unavailable: no verified CameraSystem instance or runtime matrix source");
 }
 
 void updateESPEntities(void) {
     g_entCnt=0;
+    appendESPLog(@"entity probe unavailable: no verified ActorManager/GamePlayerCenter instance");
 }
 
 static uintptr_t getStaticFields(void) {
@@ -54,7 +90,7 @@ static uintptr_t getStaticFields(void) {
 
 void installMapHack(void) {
     uintptr_t sf=getStaticFields();
-    if(!sf){NSLog(@"[GameHack] MapHack: static fields not found");return;}
+    if(!sf){NSLog(@"[GameHack] MapHack: static fields not found"); appendESPLog(@"map probe failed: static fields not found"); return;}
     *(uint32_t*)(sf+0x128)=0;
     *(uint32_t*)(sf+0x130)=0;
     *(uint32_t*)(sf+0x138)=0;
@@ -62,6 +98,7 @@ void installMapHack(void) {
     g_mapHackInstalled=true;
     g_mapHackEnabled=true;
     NSLog(@"[GameHack] MapHack: fog params zeroed");
+    appendESPLog(@"map state changed: fog parameter writes completed");
 }
 
 void enableMapHack(void) {
@@ -84,7 +121,14 @@ void disableMapHack(void) {
     [_dl addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
     return self;
 }
-- (void)tick{[self setNeedsDisplay];}
+- (void)tick{
+    g_espTicks++;
+    if ((g_espTicks % 30) == 0) {
+        updateESPMatrices();
+        updateESPEntities();
+    }
+    [self setNeedsDisplay];
+}
 - (void)drawRect:(CGRect)r{
     if(!g_espEnabled||!g_matValid)return;
     CGContextRef c=UIGraphicsGetCurrentContext();
@@ -108,5 +152,14 @@ void disableMapHack(void) {
 }
 @end
 
-void showESPOverlay(void){if(g_espWin)return;CGRect s=UIScreen.mainScreen.bounds;g_espWin=[[UIWindow alloc]initWithFrame:s];g_espWin.windowLevel=UIWindowLevelAlert;g_espWin.backgroundColor=[UIColor clearColor];g_espWin.opaque=NO;g_espWin.userInteractionEnabled=NO;g_espWin.rootViewController=[UIViewController new];g_espWin.rootViewController.view.backgroundColor=[UIColor clearColor];EspView*ev=[[EspView alloc]initWithFrame:s];[g_espWin.rootViewController.view addSubview:ev];g_espWin.hidden=NO;}
-void hideESPOverlay(void){if(g_espWin){g_espWin.hidden=YES;g_espWin=nil;}}
+void showESPOverlay(void){
+    if(g_espWin)return;
+    CGRect s=UIScreen.mainScreen.bounds;
+    g_espWin=[[UIWindow alloc]initWithFrame:s];
+    g_espWin.windowLevel=UIWindowLevelAlert;
+    g_espWin.backgroundColor=[UIColor clearColor]; g_espWin.opaque=NO; g_espWin.userInteractionEnabled=NO;
+    g_espWin.rootViewController=[UIViewController new]; g_espWin.rootViewController.view.backgroundColor=[UIColor clearColor];
+    EspView*ev=[[EspView alloc]initWithFrame:s]; [g_espWin.rootViewController.view addSubview:ev]; g_espWin.hidden=NO;
+    appendESPLog(@"overlay enabled");
+}
+void hideESPOverlay(void){if(g_espWin){g_espWin.hidden=YES;g_espWin=nil;appendESPLog(@"overlay disabled");}}

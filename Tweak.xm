@@ -5,6 +5,19 @@
 #import <dispatch/dispatch.h>
 #import <dlfcn.h>
 #include <string.h>
+#include <os/log.h>
+
+static os_log_t g_runtimeLog;
+static void runtimeLog(NSString *message) {
+    if (!g_runtimeLog) g_runtimeLog = os_log_create("gamehack", "runtime");
+    os_log(g_runtimeLog, "%{public}@", message ?: @"");
+    NSString *path = @"/var/mobile/Library/Logs/gamehack-runtime.log";
+    NSString *line = [NSString stringWithFormat:@"%@ %@\n", [NSDate date], message ?: @""];
+    NSData *data = [line dataUsingEncoding:NSUTF8StringEncoding];
+    if (![[NSFileManager defaultManager] fileExistsAtPath:path])
+        [[NSFileManager defaultManager] createFileAtPath:path contents:data attributes:nil];
+    else { NSFileHandle *h = [NSFileHandle fileHandleForWritingAtPath:path]; [h seekToEndOfFile]; [h writeData:data]; [h closeFile]; }
+}
 
 /* ── memory read slot (kept from original tweak) ── */
 #define RVA_FOW_APPLY         0x16C4598  // FogOfWarSettings$$Apply
@@ -259,6 +272,7 @@ static NSString *readAll(void) {
     [s appendString:@"\n-- STATE --\n"];
     [s appendFormat:@"MapHack        %s\n", g_mapHackEnabled ? "ON" : "OFF"];
     [s appendFormat:@"VisualFog      %s\n", g_fogDisabled ? "CLEAR" : "标准"];
+    [s appendString:@"\n-- RUNTIME PROBES --\nESP matrices   UNRESOLVED (no verified CameraSystem instance)\nESP entities   UNRESOLVED (no verified ActorManager instance)\nESP log         /var/mobile/Library/Logs/gamehack-esp.log\nRuntime log     /var/mobile/Library/Logs/gamehack-runtime.log\n"];
 
     return s;
 }
@@ -517,6 +531,7 @@ static void showHUD(void) {
         btnRead.frame = CGRectMake(12, 12, cw - 24, 34);
         btnRead.layer.cornerRadius = 10;
         [btnRead addAction:[UIAction actionWithHandler:^(UIAction *act) {
+            runtimeLog(@"manual state read requested");
             g_output.text = readAll();
         }] forControlEvents:UIControlEventTouchUpInside];
         [camBox addSubview:btnRead];
@@ -591,9 +606,11 @@ bool initIl2CppAPI(void) {
 
     if (!p_il2cpp_class_from_name || !p_il2cpp_class_get_method_from_name) {
         NSLog(@"[GameHack] dlsym: il2cpp API not found in UnityFramework");
+        runtimeLog(@"il2cpp API unresolved via dlsym");
         return false;
     }
     NSLog(@"[GameHack] il2cpp API resolved via dlsym");
+    runtimeLog(@"il2cpp API resolved via dlsym");
     return true;
 }
 
@@ -603,17 +620,20 @@ static void* resolveIl2CppMethod(const char* ns, const char* klassName, const ch
     void* klass = p_il2cpp_class_from_name(NULL, ns, klassName);
     if (!klass) {
         NSLog(@"[GameHack] class not found: %s.%s", ns, klassName);
+        runtimeLog([NSString stringWithFormat:@"class unresolved %s.%s", ns, klassName]);
         return NULL;
     }
 
     Il2CppMethodInfo* method = p_il2cpp_class_get_method_from_name(klass, methodName, args);
     if (!method || !method->methodPointer) {
         NSLog(@"[GameHack] method not found: %s.%s$$%s", ns, klassName, methodName);
+        runtimeLog([NSString stringWithFormat:@"method unresolved %s.%s::%s args=%d", ns, klassName, methodName, args]);
         return NULL;
     }
 
     NSLog(@"[GameHack] resolved %s.%s$$%s @ 0x%lx",
           ns, klassName, methodName, (uintptr_t)method->methodPointer);
+    runtimeLog([NSString stringWithFormat:@"method resolved %s.%s::%s @0x%lx", ns, klassName, methodName, (uintptr_t)method->methodPointer]);
     return method->methodPointer;
 }
 
@@ -628,6 +648,7 @@ static void* resolveIl2CppMethod(const char* ns, const char* klassName, const ch
             }
         }
         NSLog(@"[GameHack] UnityFramework base: 0x%lx", unityBase);
+        runtimeLog([NSString stringWithFormat:@"UnityFramework base=0x%lx", unityBase]);
         // Hooks installed on-demand by button press (not at startup)
         showHUD();
     });
