@@ -21,14 +21,6 @@ static uint64_t g_espTicks = 0;
 static uint64_t g_lastDiagnosticMs = 0;
 
 typedef struct {
-    int actorCount;
-    int playerCount;
-    bool cameraValid;
-} EspRuntimeDiagnostics;
-static EspRuntimeDiagnostics g_runtimeDiagnostics = {-1, -1, false};
-static os_unfair_lock g_runtimeDiagnosticsLock = OS_UNFAIR_LOCK_INIT;
-
-typedef struct {
     Vec3 pos;
     Vec3 screen;
     float hp, maxHp;
@@ -47,14 +39,6 @@ static os_unfair_lock g_entLock = OS_UNFAIR_LOCK_INIT;
 extern uintptr_t unityBase;
 extern bool g_mapHackEnabled;
 extern bool g_mapHackInstalled;
-
-void espSetRuntimeDiagnostics(int actorCount, int playerCount, bool cameraValid) {
-    os_unfair_lock_lock(&g_runtimeDiagnosticsLock);
-    g_runtimeDiagnostics.actorCount = actorCount;
-    g_runtimeDiagnostics.playerCount = playerCount;
-    g_runtimeDiagnostics.cameraValid = cameraValid;
-    os_unfair_lock_unlock(&g_runtimeDiagnosticsLock);
-}
 
 static void espLog(NSString *message) {
     if (!g_espLog) g_espLog = os_log_create("gamehack", "esp");
@@ -243,37 +227,6 @@ static EspView *g_espView = nil;
     if(!g_espEnabled)return;
     CGContextRef c=UIGraphicsGetCurrentContext();
     float sw=self.bounds.size.width,sh=self.bounds.size.height;
-    EspRuntimeDiagnostics diagnostics;
-    os_unfair_lock_lock(&g_runtimeDiagnosticsLock);
-    diagnostics = g_runtimeDiagnostics;
-    os_unfair_lock_unlock(&g_runtimeDiagnosticsLock);
-
-    /* Stable diagnostic layer: it uses only validated counters and the
-       overlay viewport, so it remains available while entity probing is off. */
-    CGRect panel = CGRectMake(12.0f, 28.0f, MIN(sw - 24.0f, 250.0f), 32.0f);
-    CGContextSetFillColorWithColor(c, [UIColor colorWithWhite:0.0 alpha:0.62].CGColor);
-    CGContextFillRect(c, panel);
-    NSString *actorText = diagnostics.actorCount >= 0
-        ? [NSString stringWithFormat:@"%d", diagnostics.actorCount] : @"-";
-    NSString *playerText = diagnostics.playerCount >= 0
-        ? [NSString stringWithFormat:@"%d", diagnostics.playerCount] : @"-";
-    NSString *diagText = [NSString stringWithFormat:@"DIAG  A:%@  P:%@  CAM:%@",
-        actorText, playerText, diagnostics.cameraValid ? @"OK" : @"WAIT"];
-    NSDictionary *diagAttrs = @{ NSFontAttributeName: [UIFont systemFontOfSize:11 weight:UIFontWeightSemibold],
-                                 NSForegroundColorAttributeName: UIColor.whiteColor };
-    [diagText drawAtPoint:CGPointMake(panel.origin.x + 8.0f, panel.origin.y + 8.0f)
-            withAttributes:diagAttrs];
-
-    /* Center marker confirms that the transparent overlay itself is visible. */
-    CGFloat cx = sw * 0.5f, cy = sh * 0.5f;
-    CGContextSetStrokeColorWithColor(c, [UIColor colorWithRed:0.35 green:0.95 blue:0.65 alpha:0.9].CGColor);
-    CGContextSetLineWidth(c, 1.0f);
-    CGContextMoveToPoint(c, cx - 8.0f, cy);
-    CGContextAddLineToPoint(c, cx + 8.0f, cy);
-    CGContextMoveToPoint(c, cx, cy - 8.0f);
-    CGContextAddLineToPoint(c, cx, cy + 8.0f);
-    CGContextStrokePath(c);
-
     EEnt local[64]; int localCount = 0;
     os_unfair_lock_lock(&g_entLock);
     localCount = g_entCnt;
