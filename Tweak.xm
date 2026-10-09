@@ -2139,6 +2139,31 @@ static void logMotionSourcesForHero(int slot, int actorIndex, uint32_t actorID,
         logical.x, logical.y, logical.z]);
 }
 
+static void probeTransformSource(Il2CppObject *actor, Il2CppVector3 *outPos,
+                                 BOOL *outPtrOK, BOOL *outRead, BOOL *outLive) {
+    if (outPos) *outPos = (Il2CppVector3){0, 0, 0};
+    if (outPtrOK) *outPtrOK = NO;
+    if (outRead) *outRead = NO;
+    if (outLive) *outLive = NO;
+    if (!actor || !p_il2cpp_object_get_class) return;
+
+    /* myTransform 是 ActorLinker 的 UnityEngine.Transform（dump 偏移 0x708）。
+       Transform 的世界坐标与渲染裁剪无关，是唯一应能在视野外持续更新的来源。
+       与冻结的 field/logical 位置并列对比即可判定链路。 */
+    uintptr_t raw = 0;
+    if (!readProcessBytes((uintptr_t)actor + 0x708, &raw, sizeof(raw)) || !raw) return;
+    if (outPtrOK) *outPtrOK = YES;
+    Il2CppObject *mt = (Il2CppObject *)raw;
+    void *mtClass = p_il2cpp_object_get_class(mt);
+    const Il2CppMethodInfo *getPos = mtClass ? resolveMethod(mtClass, "get_position", 0) : NULL;
+    if (!getPos) return;
+    Il2CppException *exc = NULL;
+    Il2CppObject *boxed = invokeMethod(getPos, mt, NULL, &exc);
+    BOOL ok = decodeBoxedVector3(boxed, exc, outPos);
+    if (outRead) *outRead = ok;
+    if (ok && outLive) *outLive = isPlausibleWorldVector(*outPos) && isLiveMovementVector(*outPos);
+}
+
 static void probeTrackedHeroActorProxies(void) {
     if (!g_proxyProbeActorManager || !g_proxyProbeActorManagerClass ||
         g_trackedHeroActorCount <= 0 || !p_il2cpp_runtime_invoke) return;
@@ -2184,13 +2209,18 @@ static void probeTrackedHeroActorProxies(void) {
         BOOL proxyPosOK = proxyClassOK && proxyID == actorID &&
             readObjectPosition(proxy, &proxyPos);
         logMotionSourcesForHero(i, g_trackedHeroActorIndexes[i], actorID, proxy);
+        Il2CppVector3 tPos = {0, 0, 0};
+        BOOL tPtrOK = NO, tRead = NO, tLive = NO;
+        probeTransformSource(proxy, &tPos, &tPtrOK, &tRead, &tLive);
         int written = snprintf(samples + used, sizeof(samples) - used,
-            "%sidx=%d id=%u cat=0x%lx catId=%u catPos=%d(%.2f,%.2f,%.2f) proxy=0x%lx proxyId=%u class=%s proxyPos=%d(%.2f,%.2f,%.2f) ex=%d",
+            "%sidx=%d id=%u cat=0x%lx catId=%u catPos=%d(%.2f,%.2f,%.2f) proxy=0x%lx proxyId=%u class=%s proxyPos=%d(%.2f,%.2f,%.2f) tPtr=%d tRead=%d tLive=%d tPos=(%.2f,%.2f,%.2f) ex=%d",
             used ? " | " : "", g_trackedHeroActorIndexes[i], actorID,
             (uintptr_t)categoryObject, categoryID, categoryPosOK ? 1 : 0,
             categoryPos.x, categoryPos.y, categoryPos.z,
             (uintptr_t)proxy, proxyID, proxyClassName[0] ? proxyClassName : "unknown",
             proxyPosOK ? 1 : 0, proxyPos.x, proxyPos.y, proxyPos.z,
+            tPtrOK ? 1 : 0, tRead ? 1 : 0, tLive ? 1 : 0,
+            tPos.x, tPos.y, tPos.z,
             exception != NULL);
         if (written > 0 && (size_t)written < sizeof(samples) - used) used += (size_t)written;
     }
