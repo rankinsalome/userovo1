@@ -1504,8 +1504,128 @@ static int readBoxedIntResult(const Il2CppMethodInfo *method, Il2CppObject *obje
     return *raw;
 }
 
+/* Targeted validation for the two ActorManager dictionaries.  The current
+ * ESP path only uses the typed category accessors; this probe deliberately
+ * walks DictionaryView values so the log can distinguish a complete logic
+ * registry from a view/culling list.  It is throttled and capped because the
+ * custom enumerator is a value-type wrapper and must be exercised carefully. */
+static void probeActorDictionaryEntries(Il2CppObject *dictionary, const char *label) {
+    if (!dictionary || !label || !p_il2cpp_object_get_class) return;
+
+    void *dictionaryClass = p_il2cpp_object_get_class(dictionary);
+    const char *dictionaryName = dictionaryClass && p_il2cpp_class_get_name
+        ? p_il2cpp_class_get_name(dictionaryClass) : NULL;
+    const Il2CppMethodInfo *countMethod = resolveMethod(dictionaryClass, "get_Count", 0);
+    const Il2CppMethodInfo *enumeratorMethod = resolveMethod(dictionaryClass, "GetEnumerator", 0);
+    BOOL countOK = NO;
+    int count = readBoxedIntResult(countMethod, dictionary, NULL, &countOK);
+    if (!countOK) count = -1;
+
+    Il2CppException *exception = NULL;
+    Il2CppObject *boxedEnumerator = enumeratorMethod
+        ? invokeMethod(enumeratorMethod, dictionary, NULL, &exception) : NULL;
+    void *enumeratorClass = boxedEnumerator && p_il2cpp_object_get_class
+        ? p_il2cpp_object_get_class(boxedEnumerator) : NULL;
+    const char *enumeratorName = enumeratorClass && p_il2cpp_class_get_name
+        ? p_il2cpp_class_get_name(enumeratorClass) : NULL;
+    const Il2CppMethodInfo *moveNext = resolveMethod(enumeratorClass, "MoveNext", 0);
+    const Il2CppMethodInfo *currentMethod = resolveMethod(enumeratorClass, "get_Current", 0);
+
+    int iterated = 0;
+    int actorObjects = 0;
+    int actorLinkers = 0;
+    int typedMatches = 0;
+    int targetMatches = 0;
+    char samples[2048] = {0};
+    size_t sampleUsed = 0;
+
+    if (boxedEnumerator && moveNext && currentMethod) {
+        for (int index = 0; index < 256; index++) {
+            exception = NULL;
+            Il2CppObject *advanced = invokeMethod(moveNext, boxedEnumerator, NULL, &exception);
+            if (exception || !advanced || !p_il2cpp_object_unbox) break;
+            void *advancedRaw = p_il2cpp_object_unbox(advanced);
+            if (!advancedRaw) break;
+            BOOL hasNext = *(BOOL *)advancedRaw;
+            if (!hasNext) break;
+            iterated++;
+
+            exception = NULL;
+            Il2CppObject *pair = invokeMethod(currentMethod, boxedEnumerator, NULL, &exception);
+            if (!pair || exception || !p_il2cpp_object_get_class) continue;
+            void *pairClass = p_il2cpp_object_get_class(pair);
+            const Il2CppMethodInfo *valueMethod = resolveMethod(pairClass, "get_Value", 0);
+            if (!valueMethod) continue;
+            exception = NULL;
+            Il2CppObject *handle = invokeMethod(valueMethod, pair, NULL, &exception);
+            if (!handle || exception) continue;
+
+            Il2CppObject *actor = NULL;
+            void *handleClass = p_il2cpp_object_get_class(handle);
+            const char *handleName = handleClass && p_il2cpp_class_get_name
+                ? p_il2cpp_class_get_name(handleClass) : NULL;
+            if (handleName && strcmp(handleName, "ActorLinker") == 0) {
+                actor = handle;
+            } else {
+                const Il2CppMethodInfo *handleGetter = resolveMethod(handleClass, "get_handle", 0);
+                if (!handleGetter) handleGetter = resolveMethod(handleClass, "get_GetHandleObjForce", 0);
+                if (handleGetter) {
+                    exception = NULL;
+                    actor = invokeMethod(handleGetter, handle, NULL, &exception);
+                    if (exception) actor = NULL;
+                }
+            }
+            if (!actor) continue;
+            actorObjects++;
+
+            uint32_t actorID = 0;
+            readUInt32Field(actor, 0x4AC, &actorID);
+            void *actorClass = p_il2cpp_object_get_class(actor);
+            const char *actorName = actorClass && p_il2cpp_class_get_name
+                ? p_il2cpp_class_get_name(actorClass) : NULL;
+            if (actorName && strcmp(actorName, "ActorLinker") == 0) actorLinkers++;
+
+            BOOL typed = NO;
+            for (int refIndex = 0; refIndex < g_actorPositionRefCount50; refIndex++) {
+                if (g_actorPositionRefs50[refIndex].object == actor) {
+                    typed = YES;
+                    break;
+                }
+            }
+            if (typed) typedMatches++;
+
+            BOOL target = actorID == 81 || actorID == 86 || actorID == 91 || actorID == 96;
+            if (target) {
+                targetMatches++;
+                Il2CppVector3 field = {0, 0, 0};
+                Il2CppVector3 logical = {0, 0, 0};
+                BOOL fieldOK = readVector3Field(actor, 0x4C4, &field);
+                BOOL logicalOK = tryActorLogicalPosition(actor, actorClass, &logical);
+                int written = snprintf(samples + sampleUsed, sizeof(samples) - sampleUsed,
+                                       "%sid=%u ptr=0x%lx typed=%d field=(%.2f,%.2f,%.2f) logical=%s(%.2f,%.2f,%.2f)",
+                                       sampleUsed ? " | " : "", actorID, (uintptr_t)actor,
+                                       typed ? 1 : 0,
+                                       fieldOK ? field.x : 0.0f, fieldOK ? field.y : 0.0f,
+                                       fieldOK ? field.z : 0.0f,
+                                       logicalOK ? "ok" : "no",
+                                       logical.x, logical.y, logical.z);
+                if (written > 0 && (size_t)written < sizeof(samples) - sampleUsed)
+                    sampleUsed += (size_t)written;
+            }
+        }
+    }
+
+    runtimeLog([NSString stringWithFormat:
+        @"actor dictionary probe name=%s class=%s count=%d enum=%s methods(count=%d,getEnum=%d,moveNext=%d,current=%d) iterated=%d actors=%d linkers=%d typed=%d targets=%d samples=%s",
+        label, dictionaryName ?: "unknown", count, enumeratorName ?: "unknown",
+        countOK ? 1 : 0, enumeratorMethod != NULL, moveNext != NULL,
+        currentMethod != NULL, iterated, actorObjects, actorLinkers, typedMatches,
+        targetMatches, sampleUsed ? samples : "none"]);
+}
+
 static void probeActorManagerContainers(void *actorClass, Il2CppObject *actorManager) {
     static int lastCount = -2;
+    static NSTimeInterval lastEntryProbe = 0.0;
     if (!actorClass || !actorManager) return;
     const Il2CppMethodInfo *actorListGetter = resolveMethod(actorClass, "get_ActorList", 0);
     if (!actorListGetter) {
@@ -1523,6 +1643,16 @@ static void probeActorManagerContainers(void *actorClass, Il2CppObject *actorMan
     BOOL countOK = NO;
     int count = readBoxedIntResult(countMethod, actorList, NULL, &countOK);
     if (!countOK) count = -1;
+    NSTimeInterval now = [NSDate timeIntervalSinceReferenceDate];
+    if (lastEntryProbe <= 0.0 || now - lastEntryProbe >= 2.0) {
+        lastEntryProbe = now;
+        probeActorDictionaryEntries(actorList, "actorList");
+        Il2CppObject *updatableList = NULL;
+        if (readObjectPointerField(actorManager, 0x10, &updatableList))
+            probeActorDictionaryEntries(updatableList, "updatableActorList");
+        else
+            runtimeLog(@"actor dictionary probe name=updatableActorList field=0x10 unresolved");
+    }
     if (count == lastCount) return;
     lastCount = count;
     runtimeLog([NSString stringWithFormat:
