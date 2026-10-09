@@ -2276,6 +2276,9 @@ static void probePlayerCaptainChain(Il2CppObject *center, void *centerClass) {
         readProcessBytes((uintptr_t)player + 0xC, &campPos, sizeof(campPos));
         readProcessBytes((uintptr_t)player + 0x20, &playerId, sizeof(playerId));
 
+        int32_t logicRaw[3] = {0, 0, 0};
+        readProcessBytes((uintptr_t)player + 0x460, logicRaw, sizeof(logicRaw));
+
         uintptr_t captainObj = 0;
         readProcessBytes((uintptr_t)player + 0x1C8, &captainObj, sizeof(captainObj));
         BOOL captainOK = captainObj != 0 && isPlausibleObjectPointer(captainObj);
@@ -2298,8 +2301,9 @@ static void probePlayerCaptainChain(Il2CppObject *center, void *centerClass) {
         }
 
         int written = snprintf(summary + used, sizeof(summary) - used,
-            "%sidx=%d player=0x%lx camp=%u campPos=%d id=%u captain=%d(%s:0x%lx) move=%d(0x%lx) field=%d(%.1f,%.1f,%.1f) cur=%d(%.1f,%.1f,%.1f) remote=%d(%.1f,%.1f,%.1f)",
+            "%sidx=%d player=0x%lx camp=%u campPos=%d id=%u logic=(%d,%d,%d) captain=%d(%s:0x%lx) move=%d(0x%lx) field=%d(%.1f,%.1f,%.1f) cur=%d(%.1f,%.1f,%.1f) remote=%d(%.1f,%.1f,%.1f)",
             used ? " | " : "", i, (uintptr_t)player, camp, campPos, playerId,
+            logicRaw[0], logicRaw[1], logicRaw[2],
             captainOK ? 1 : 0, captainClass[0] ? captainClass : "?", captainObj,
             moveControl ? 1 : 0, moveControl,
             fieldOK ? 1 : 0, field.x, field.y, field.z,
