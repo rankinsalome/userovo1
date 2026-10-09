@@ -2164,58 +2164,6 @@ static void probeTransformSource(Il2CppObject *actor, Il2CppVector3 *outPos,
     if (ok && outLive) *outLive = isPlausibleWorldVector(*outPos) && isLiveMovementVector(*outPos);
 }
 
-static BOOL isPlausibleObjectPointer(uintptr_t p) {
-    if (p < 0x1000 || p > 0x200000000ULL) return NO;
-    uintptr_t klass = 0;
-    if (!readProcessBytes(p, &klass, sizeof(klass))) return NO;
-    return klass > 0x1000 && klass < 0x200000000ULL;
-}
-
-/* 逻辑移动层探针：MoveControl(0x420) 是渲染层之外的逻辑位置来源，
-   SelfPtr(0x460) 是 PoolObjHandle<ActorLinker>，PositionRecords(0x478)
-   是位置记录 List。三者并列读出来，定位 iOS 上"视野无关"的移动数据挂点。 */
-static int appendLogicLayerSummary(Il2CppObject *actor, int index, uint32_t actorID,
-                                   char *buf, size_t cap) {
-    if (!actor || !buf || cap < 2) return 0;
-    uintptr_t moveControl = 0;
-    uintptr_t selfObj = 0;
-    uint32_t selfSeq = 0;
-    uintptr_t recItems = 0;
-    int32_t recSize = 0;
-    readProcessBytes((uintptr_t)actor + 0x420, &moveControl, sizeof(moveControl));
-    readProcessBytes((uintptr_t)actor + 0x460, &selfSeq, sizeof(selfSeq));
-    readProcessBytes((uintptr_t)actor + 0x468, &selfObj, sizeof(selfObj));
-    readProcessBytes((uintptr_t)actor + 0x478, &recItems, sizeof(recItems));
-    readProcessBytes((uintptr_t)actor + 0x480, &recSize, sizeof(recSize));
-
-    char moveClass[48] = {0}, moveNs[48] = {0};
-    if (moveControl && isPlausibleObjectPointer(moveControl))
-        readObjectClassName((Il2CppObject *)moveControl, moveClass, sizeof(moveClass),
-                            moveNs, sizeof(moveNs));
-    char selfClass[48] = {0}, selfNs[48] = {0};
-    if (selfObj && isPlausibleObjectPointer(selfObj))
-        readObjectClassName((Il2CppObject *)selfObj, selfClass, sizeof(selfClass),
-                            selfNs, sizeof(selfNs));
-
-    Il2CppVector3 mcCur = {0, 0, 0}, mcRemote = {0, 0, 0};
-    BOOL mcCurOK = NO, mcRemoteOK = NO;
-    if (moveControl && isPlausibleObjectPointer(moveControl)) {
-        mcCurOK = readMoveComponentPosition((Il2CppObject *)moveControl, "get_CurPosition", &mcCur);
-        mcRemoteOK = readMoveComponentPosition((Il2CppObject *)moveControl, "get_RemotePosition", &mcRemote);
-    }
-
-    int written = snprintf(buf, cap,
-        "idx=%d id=%u move=%c(%s:0x%lx) mcCur=%c(%.1f,%.1f,%.1f) mcRemote=%c(%.1f,%.1f,%.1f) self=%c(seq=%u %s:0x%lx) rec=%c(items=0x%lx n=%d)",
-        index, actorID,
-        moveControl ? '1' : '0', moveClass[0] ? moveClass : "?", moveControl,
-        mcCurOK ? '1' : '0', mcCur.x, mcCur.y, mcCur.z,
-        mcRemoteOK ? '1' : '0', mcRemote.x, mcRemote.y, mcRemote.z,
-        selfObj ? '1' : '0', selfSeq, selfClass[0] ? selfClass : "?", selfObj,
-        recItems ? '1' : '0', recItems, recSize);
-    if (written <= 0) return 0;
-    return (written < (int)cap) ? written : (int)cap - 1;
-}
-
 static void probeTrackedHeroActorProxies(void) {
     if (!g_proxyProbeActorManager || !g_proxyProbeActorManagerClass ||
         g_trackedHeroActorCount <= 0 || !p_il2cpp_runtime_invoke) return;
@@ -2230,8 +2178,6 @@ static void probeTrackedHeroActorProxies(void) {
     }
     char samples[3500] = {0};
     size_t used = 0;
-    char logicSamples[4096] = {0};
-    size_t logicUsed = 0;
     int queried = 0, returned = 0;
     for (int i = 0; i < g_trackedHeroActorCount; i++) {
         uint32_t actorID = g_trackedHeroActorIDs[i];
@@ -2266,11 +2212,6 @@ static void probeTrackedHeroActorProxies(void) {
         Il2CppVector3 tPos = {0, 0, 0};
         BOOL tPtrOK = NO, tRead = NO, tLive = NO;
         probeTransformSource(proxy, &tPos, &tPtrOK, &tRead, &tLive);
-        if (logicUsed > 0 && logicUsed < sizeof(logicSamples) - 1) logicSamples[logicUsed++] = ' ';
-        int logicWritten = appendLogicLayerSummary(proxy, g_trackedHeroActorIndexes[i],
-                                                   actorID, logicSamples + logicUsed,
-                                                   sizeof(logicSamples) - logicUsed);
-        if (logicWritten > 0) logicUsed += (size_t)logicWritten;
         int written = snprintf(samples + used, sizeof(samples) - used,
             "%sidx=%d id=%u cat=0x%lx catId=%u catPos=%d(%.2f,%.2f,%.2f) proxy=0x%lx proxyId=%u class=%s proxyPos=%d(%.2f,%.2f,%.2f) tPtr=%d tRead=%d tLive=%d tPos=(%.2f,%.2f,%.2f) ex=%d",
             used ? " | " : "", g_trackedHeroActorIndexes[i], actorID,
@@ -2285,11 +2226,6 @@ static void probeTrackedHeroActorProxies(void) {
     }
     runtimeLog([NSString stringWithFormat:@"actor proxy probe queried=%d returned=%d tracked=%d samples=%s",
         queried, returned, g_trackedHeroActorCount, used ? samples : "none"]);
-    static char g_lastLogicSamples[4096] = {0};
-    if (logicUsed > 0 && strcmp(logicSamples, g_lastLogicSamples) != 0) {
-        strncpy(g_lastLogicSamples, logicSamples, sizeof(g_lastLogicSamples) - 1);
-        runtimeLog([NSString stringWithFormat:@"logic probe samples=%s", logicSamples]);
-    }
 }
 
 static int appendSupplementalActorList(void *actorClass, Il2CppObject *actorManager,
