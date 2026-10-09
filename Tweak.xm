@@ -1272,6 +1272,58 @@ static BOOL findDisplayPosition(const RuntimeDisplayRecord *records, int count,
     return NO;
 }
 
+/* Unified source comparison.  This is intentionally read-only and bounded:
+ * it compares all sources for a few stable actor IDs in the same refresh,
+ * instead of comparing unrelated samples from different probes. */
+static void probeUnifiedSourceAvailability(void *baseImage) {
+    static BOOL logged = NO;
+    if (logged || !baseImage || !p_il2cpp_class_from_name) return;
+    logged = YES;
+    void *sgwClass = p_il2cpp_class_from_name(baseImage, "", "SGW");
+    const Il2CppMethodInfo *logic = resolveMethod(sgwClass, "GetActorLogicPos", 2);
+    const Il2CppMethodInfo *movement = resolveMethod(sgwClass, "GetDebugMovementData", 2);
+    const Il2CppMethodInfo *predict = resolveMethod(sgwClass, "GetDisplayPredictData", 0);
+    runtimeLog([NSString stringWithFormat:
+        @"unified sources SGW=%d logicPos=0x%lx debugMovement=0x%lx predict=0x%lx",
+        sgwClass != NULL, (uintptr_t)logic, (uintptr_t)movement, (uintptr_t)predict]);
+}
+
+static void probeUnifiedActorSources(uint32_t actorID, Il2CppObject *actor,
+                                     const RuntimeDisplayRecord *displayRecords,
+                                     int displayCount, int ordinal) {
+    if (!actor || !actorID || ordinal >= 8) return;
+    static const Il2CppMethodInfo *worldMethod = NULL;
+    static BOOL worldResolved = NO;
+    if (!worldResolved) {
+        worldResolved = YES;
+        void *core = findIl2CppImageNamed("Scripts.GameCore.dll");
+        void *klass = core && p_il2cpp_class_from_name
+            ? p_il2cpp_class_from_name(core, "", "LuaCallCs_Battle") : NULL;
+        worldMethod = resolveMethod(klass, "GetActorWorldPos", 1);
+    }
+    Il2CppVector3 actorPos = {0, 0, 0};
+    BOOL actorOK = readObjectPosition(actor, &actorPos) && isUsableActorWorld(actorPos);
+    Il2CppVector3 displayPos = {0, 0, 0};
+    BOOL displayOK = findDisplayPosition(displayRecords, displayCount, actorID, &displayPos) &&
+        isUsableActorWorld(displayPos);
+    Il2CppVector3 logicPos = {0, 0, 0};
+    BOOL logicOK = NO;
+    if (worldMethod) {
+        uint32_t id = actorID;
+        void *params[1] = { &id };
+        Il2CppException *exception = NULL;
+        Il2CppObject *boxed = invokeMethod(worldMethod, NULL, params, &exception);
+        logicOK = decodeBoxedVector3(boxed, exception, &logicPos) &&
+            isUsableActorWorld(logicPos);
+    }
+    const char *selected = actorOK ? "actor" : (logicOK ? "logic" : (displayOK ? "display" : "none"));
+    runtimeLog([NSString stringWithFormat:
+        @"unified actor=%u ord=%d actor=%d(%.2f,%.2f,%.2f) logic=%d(%.2f,%.2f,%.2f) display=%d(%.2f,%.2f,%.2f) selected=%s",
+        actorID, ordinal, actorOK, actorPos.x, actorPos.y, actorPos.z,
+        logicOK, logicPos.x, logicPos.y, logicPos.z,
+        displayOK, displayPos.x, displayPos.y, displayPos.z, selected]);
+}
+
 static Il2CppObject *g_projectionCamera = NULL;
 static const Il2CppMethodInfo *g_worldToScreenMethod = NULL;
 
@@ -1955,7 +2007,10 @@ static void probeSGWDebugMovementMethod(void *baseImage) {
 }
 
 static BOOL isUsableActorScreen(Il2CppVector3 screen) {
-    return isfinite(screen.x) && isfinite(screen.y) && isfinite(screen.z) && screen.z > 0.0f;
+    /* Keep finite projections even when they are outside the viewport or
+       behind the camera.  The overlay converts those samples into an edge
+       marker; dropping them here made off-screen actors disappear. */
+    return isfinite(screen.x) && isfinite(screen.y) && isfinite(screen.z);
 }
 
 static int appendDisplayCacheSnapshot(const RuntimeDisplayRecord *records, int count,
@@ -2049,6 +2104,7 @@ static void refreshActorSnapshotPositions(void) {
     RuntimeDisplayRecord displayRecords[512] = {};
     int displayCount = 0;
     readDisplayCache(displayRecords, 512, &displayCount);
+    probeUnifiedSourceAvailability(findIl2CppImageNamed("Scripts.GameCore.dll"));
 
     espBeginEntitySnapshot();
     int valid = 0;
@@ -2645,6 +2701,8 @@ static void probeActorSnapshot50(void *actorClass, Il2CppObject *actorManager) {
             Il2CppVector3 world = {0, 0, 0};
             uint32_t actorID = 0;
             readUInt32Field(actor, 0x4AC, &actorID);
+            probeUnifiedActorSources(actorID, actor, displayRecords, displayCount,
+                                     g_actorSnapshot50Valid);
             if (source == 0) rememberHeroActorID(actorID, index);
             /* Prefer the live ActorLinker/MoveControl path.  The SGW display
                cache is only a fallback because it can be stale when the
@@ -2652,6 +2710,7 @@ static void probeActorSnapshot50(void *actorClass, Il2CppObject *actorManager) {
             Il2CppVector3 liveWorld = {0, 0, 0};
             BOOL positionOK = readObjectPosition(actor, &liveWorld) &&
                 isUsableActorWorld(liveWorld);
+            const char *selectedSource = positionOK ? "A" : "-";
             if (positionOK) {
                 world = liveWorld;
                 sourceLiveCount++;
@@ -2661,6 +2720,7 @@ static void probeActorSnapshot50(void *actorClass, Il2CppObject *actorManager) {
                                                   actorID, &cachedWorld) &&
                     isUsableActorWorld(cachedWorld);
                 if (positionOK) world = cachedWorld;
+                if (positionOK) selectedSource = "D";
                 if (positionOK) sourceDisplayCount++;
             }
             if (source == 2) sourceBuffCount++;
@@ -2679,7 +2739,8 @@ static void probeActorSnapshot50(void *actorClass, Il2CppObject *actorManager) {
 
             char displayName[96] = {0};
             const char *selfTag = (source == 0 && index == 0) ? " SELF" : "";
-            snprintf(displayName, sizeof(displayName), "%s[%d]%s %s", sourceNames[source], index,
+            snprintf(displayName, sizeof(displayName), "%s[%d][%s]%s %s", sourceNames[source], index,
+                     selectedSource,
                      selfTag,
                      className[0] ? className : "Actor");
             if (g_actorPositionRefCount50 < 512) {

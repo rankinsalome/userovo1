@@ -182,7 +182,9 @@ void espAppendEntitySnapshot(float x, float y, float z,
     EEnt *e = &g_pendingEnts[g_pendingEntCnt++];
     e->pos = Vec3{x, y, z};
     e->screen = Vec3{sx, sy, sz};
-    e->screenValid = isfinite(sx) && isfinite(sy) && sx >= 0.0f && sy >= 0.0f;
+    /* Negative/out-of-viewport coordinates are valid WorldToScreenPoint
+       results for off-screen actors.  Keep them for edge rendering. */
+    e->screenValid = isfinite(sx) && isfinite(sy) && isfinite(sz);
     e->ok = e->screenValid;
     e->team = 0;
     e->hp = 0.0f;
@@ -351,7 +353,29 @@ static EspView *g_espView = nil;
                 sp.y = sh - sp.y;
             }
         }
-        if(sp.x<0||sp.y<0||sp.x>sw||sp.y>sh)continue;
+        BOOL behind = e->screen.z <= 0.0f;
+        if (behind) {
+            /* Unity returns a mirrored projection for points behind the
+               camera.  Flip around the viewport center before clamping. */
+            sp.x = sw - sp.x;
+            sp.y = sh - sp.y;
+        }
+        BOOL offscreen = sp.x < 0.0f || sp.y < 0.0f || sp.x > sw || sp.y > sh;
+        if (offscreen) {
+            CGFloat margin = 16.0f;
+            CGFloat dx = sp.x - sw * 0.5f;
+            CGFloat dy = sp.y - sh * 0.5f;
+            CGFloat scaleX = fabs(dx) > 0.001f ? (sw * 0.5f - margin) / fabs(dx) : 100000.0f;
+            CGFloat scaleY = fabs(dy) > 0.001f ? (sh * 0.5f - margin) / fabs(dy) : 100000.0f;
+            CGFloat scale = MIN(1.0f, MIN(scaleX, scaleY));
+            sp.x = sw * 0.5f + dx * scale;
+            sp.y = sh * 0.5f + dy * scale;
+            CGContextSetStrokeColorWithColor(c, [UIColor colorWithRed:1.0 green:0.75 blue:0.15 alpha:0.9].CGColor);
+            CGContextSetLineWidth(c, 1.0f);
+            CGContextMoveToPoint(c, sw * 0.5f, sh * 0.5f);
+            CGContextAddLineToPoint(c, sp.x, sp.y);
+            CGContextStrokePath(c);
+        }
         float cr=10;
         UIColor*cl=e->team!=1?UIColor.redColor:UIColor.greenColor;
         CGContextSetStrokeColorWithColor(c,cl.CGColor);
@@ -365,6 +389,7 @@ static EspView *g_espView = nil;
         CGContextFillRect(c,CGRectMake(sp.x-bw/2,sp.y-cr-10,bw*hf,bh));
         NSString *label = [NSString stringWithUTF8String:e->className];
         if (label.length == 0) label = @"Object";
+        if (offscreen) label = [NSString stringWithFormat:@"[EDGE] %@", label];
         NSString *ns = [NSString stringWithUTF8String:e->namespaceName];
         if (ns.length > 0 && ![label hasPrefix:[ns stringByAppendingString:@"."]])
             label = [NSString stringWithFormat:@"%@.%@", ns, label];
