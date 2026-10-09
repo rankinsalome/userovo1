@@ -883,6 +883,7 @@ static BOOL decodeBoxedVector3(Il2CppObject *boxed, Il2CppException *exception,
                                Il2CppVector3 *outPosition);
 static Il2CppObject *invokeMethod(const Il2CppMethodInfo *method, Il2CppObject *object,
                                   void **params, Il2CppException **exception);
+static BOOL readUInt32Field(Il2CppObject *object, size_t offset, uint32_t *outValue);
 
 static BOOL readProcessBytes(uintptr_t address, void *buffer, size_t size) {
     if (!address || !buffer || size == 0) return NO;
@@ -1804,7 +1805,7 @@ static void refreshActorSnapshotPositions(void) {
         }
     }
 
-    RuntimeDisplayRecord displayRecords[512] = {0};
+    RuntimeDisplayRecord displayRecords[512] = {};
     int displayCount = 0;
     readDisplayCache(displayRecords, 512, &displayCount);
 
@@ -1957,7 +1958,7 @@ static void probeActorSnapshot50(void *actorClass, Il2CppObject *actorManager) {
         return;
     }
     updateProjectionViewport();
-    RuntimeDisplayRecord displayRecords[512] = {0};
+    RuntimeDisplayRecord displayRecords[512] = {};
     int displayCount = 0;
     readDisplayCache(displayRecords, 512, &displayCount);
     espBeginEntitySnapshot();
