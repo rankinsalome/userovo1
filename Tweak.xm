@@ -2251,9 +2251,10 @@ static void probePlayerCaptainChain(Il2CppObject *center, void *centerClass) {
     if (lastProbe > 0.0 && now - lastProbe < 2.0) return;
     lastProbe = now;
 
+    static BOOL methodLogged = NO;
+
     const Il2CppMethodInfo *getPlayer = resolveMethod(centerClass, "GetPlayerByIndex", 1);
     if (!getPlayer) {
-        static BOOL methodLogged = NO;
         runtimeLogOnce(&methodLogged, @"player captain chain unresolved GetPlayerByIndex(args=1)");
         return;
     }
