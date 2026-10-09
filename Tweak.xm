@@ -1837,6 +1837,8 @@ static BOOL isLiveMovementVector(Il2CppVector3 world) {
     return isUsableActorWorld(world) && vectorLengthSq(world) > 0.0001f;
 }
 
+static BOOL isUsableActorScreen(Il2CppVector3 screen);
+
 static BOOL findDisplayPosition(const RuntimeDisplayRecord *records, int count,
                                 uint32_t actorID, Il2CppVector3 *outPosition);
 
@@ -1865,7 +1867,7 @@ static void probeFocusedBuffMonsterSources(Il2CppObject *actor, int index,
     Il2CppVector3 remote = {0, 0, 0};
     Il2CppObject *moveControl = NULL;
     BOOL curRead = NO, remoteRead = NO, actorFieldRead = NO;
-    readActorMovementSources(actor, &cur, &remote, &moveControl,
+    readActorMovementSources(actor, &cur, &remote, &field, &moveControl,
                              &curRead, &remoteRead, &actorFieldRead);
 
     Il2CppVector3 display = {0, 0, 0};
