@@ -2238,6 +2238,81 @@ static int appendLogicLayerSummary(Il2CppObject *actor, int index, uint32_t acto
     return (written < (int)cap) ? written : (int)cap - 1;
 }
 
+/* Player-centric logical-layer probe.  The render proxy obtained from the
+ * typed ActorManager accessors has a null MoveControl, so we pivot to the
+ * GamePlayerCenter indexer: GetPlayerByIndex -> Player -> Captain (a real
+ * PoolObjHandle<ActorLinker>).  Player also carries camp/campPos/PlayerId, so
+ * this chain yields both the identity split and a logic MoveComponent that is
+ * independent of renderer/culling.  Read-only and index-bounded (10 players). */
+static void probePlayerCaptainChain(Il2CppObject *center, void *centerClass) {
+    if (!center || !centerClass || !p_il2cpp_runtime_invoke) return;
+    static NSTimeInterval lastProbe = 0.0;
+    NSTimeInterval now = [NSDate timeIntervalSinceReferenceDate];
+    if (lastProbe > 0.0 && now - lastProbe < 2.0) return;
+    lastProbe = now;
+
+    const Il2CppMethodInfo *getPlayer = resolveMethod(centerClass, "GetPlayerByIndex", 1);
+    if (!getPlayer) {
+        static BOOL methodLogged = NO;
+        runtimeLogOnce(&methodLogged, @"player captain chain unresolved GetPlayerByIndex(args=1)");
+        return;
+    }
+
+    char summary[4096] = {0};
+    size_t used = 0;
+    int resolved = 0, withCaptain = 0, withMove = 0;
+
+    for (int i = 0; i < 10; i++) {
+        int32_t index = i;
+        void *params[1] = { &index };
+        Il2CppException *exception = NULL;
+        Il2CppObject *player = invokeMethod(getPlayer, center, params, &exception);
+        if (!player || exception || !isPlausibleObjectPointer((uintptr_t)player)) continue;
+        resolved++;
+
+        uint32_t camp = 0, playerId = 0;
+        int32_t campPos = 0;
+        readProcessBytes((uintptr_t)player + 0x8, &camp, sizeof(camp));
+        readProcessBytes((uintptr_t)player + 0xC, &campPos, sizeof(campPos));
+        readProcessBytes((uintptr_t)player + 0x20, &playerId, sizeof(playerId));
+
+        uintptr_t captainObj = 0;
+        readProcessBytes((uintptr_t)player + 0x1C8, &captainObj, sizeof(captainObj));
+        BOOL captainOK = captainObj != 0 && isPlausibleObjectPointer(captainObj);
+        if (captainOK) withCaptain++;
+
+        uintptr_t moveControl = 0;
+        Il2CppVector3 field = {0, 0, 0}, cur = {0, 0, 0}, remote = {0, 0, 0};
+        BOOL fieldOK = NO, curOK = NO, remoteOK = NO;
+        char captainClass[48] = {0}, captainNs[48] = {0};
+        if (captainOK) {
+            readObjectClassName((Il2CppObject *)captainObj, captainClass, sizeof(captainClass),
+                                captainNs, sizeof(captainNs));
+            readProcessBytes(captainObj + 0x420, &moveControl, sizeof(moveControl));
+            if (moveControl && isPlausibleObjectPointer(moveControl)) withMove++;
+            fieldOK = readVector3Field((Il2CppObject *)captainObj, 0x4C4, &field);
+            if (moveControl && isPlausibleObjectPointer(moveControl)) {
+                curOK = readMoveComponentPosition((Il2CppObject *)moveControl, "get_CurPosition", &cur);
+                remoteOK = readMoveComponentPosition((Il2CppObject *)moveControl, "get_RemotePosition", &remote);
+            }
+        }
+
+        int written = snprintf(summary + used, sizeof(summary) - used,
+            "%sidx=%d player=0x%lx camp=%u campPos=%d id=%u captain=%d(%s:0x%lx) move=%d(0x%lx) field=%d(%.1f,%.1f,%.1f) cur=%d(%.1f,%.1f,%.1f) remote=%d(%.1f,%.1f,%.1f)",
+            used ? " | " : "", i, (uintptr_t)player, camp, campPos, playerId,
+            captainOK ? 1 : 0, captainClass[0] ? captainClass : "?", captainObj,
+            moveControl ? 1 : 0, moveControl,
+            fieldOK ? 1 : 0, field.x, field.y, field.z,
+            curOK ? 1 : 0, cur.x, cur.y, cur.z,
+            remoteOK ? 1 : 0, remote.x, remote.y, remote.z);
+        if (written > 0 && (size_t)written < sizeof(summary) - used) used += (size_t)written;
+    }
+
+    runtimeLog([NSString stringWithFormat:
+        @"player captain chain resolved=%d withCaptain=%d withMove=%d samples=%s",
+        resolved, withCaptain, withMove, used ? summary : "none"]);
+}
+
 static void probeTrackedHeroActorProxies(void) {
     if (!g_proxyProbeActorManager || !g_proxyProbeActorManagerClass ||
         g_trackedHeroActorCount <= 0 || !p_il2cpp_runtime_invoke) return;
@@ -2682,6 +2757,7 @@ static void probeEntityManagers(void) {
     logActorCategoryCounts(actorClassForChain, actorManagerForChain);
     probePlayerSemanticCounts(playerCenterClassForSemantics, playerCenterForSemantics,
                               sampledPlayerCount);
+    probePlayerCaptainChain(playerCenterForSemantics, playerCenterClassForSemantics);
     probeSingleHeroActor(gameCoreImage, actorManagerForChain, actorClassForChain);
     uintptr_t managerIdentity = (uintptr_t)actorManagerForChain;
     if (managerIdentity != g_proxyProbeManagerIdentity) {
