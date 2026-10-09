@@ -12,7 +12,7 @@
 
 static os_log_t g_runtimeLog;
 static BOOL g_runtimeLogPrepared = NO;
-static const unsigned long long kRuntimeLogLimit = 8ULL * 1024ULL * 1024ULL;
+static const unsigned long long kRuntimeLogLimit = 512ULL * 1024ULL;
 
 static NSString *gamehackDocumentsLogPath(NSString *name) {
     NSArray *paths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
@@ -41,9 +41,7 @@ static BOOL appendLineToPath(NSString *line, NSString *path, NSError **outError)
     NSDictionary *attributes = [fm attributesOfItemAtPath:path error:NULL];
     NSNumber *existingSize = attributes[NSFileSize];
     if (existingSize && existingSize.unsignedLongLongValue > kRuntimeLogLimit) {
-        NSString *rotated = [path stringByAppendingString:@".old"];
-        [fm removeItemAtPath:rotated error:NULL];
-        [fm moveItemAtPath:path toPath:rotated error:NULL];
+        [fm removeItemAtPath:path error:NULL];
     }
     if (![fm fileExistsAtPath:path]) {
         if (![fm createFileAtPath:path contents:data attributes:nil]) {
@@ -1536,7 +1534,6 @@ static void probeActorDictionaryEntries(Il2CppObject *dictionary, const char *la
     int actorLinkers = 0;
     int typedMatches = 0;
     int targetMatches = 0;
-    int withMoveControl = 0;
     char samples[2048] = {0};
     size_t sampleUsed = 0;
 
@@ -1586,10 +1583,6 @@ static void probeActorDictionaryEntries(Il2CppObject *dictionary, const char *la
                 ? p_il2cpp_class_get_name(actorClass) : NULL;
             if (actorName && strcmp(actorName, "ActorLinker") == 0) actorLinkers++;
 
-            Il2CppObject *moveControl = NULL;
-            BOOL movePointerOK = readObjectPointerField(actor, 0x420, &moveControl);
-            if (movePointerOK && moveControl) withMoveControl++;
-
             BOOL typed = NO;
             for (int refIndex = 0; refIndex < g_actorPositionRefCount50; refIndex++) {
                 if (g_actorPositionRefs50[refIndex].object == actor) {
@@ -1604,26 +1597,16 @@ static void probeActorDictionaryEntries(Il2CppObject *dictionary, const char *la
                 targetMatches++;
                 Il2CppVector3 field = {0, 0, 0};
                 Il2CppVector3 logical = {0, 0, 0};
-                Il2CppVector3 cur = {0, 0, 0};
-                Il2CppVector3 remote = {0, 0, 0};
                 BOOL fieldOK = readVector3Field(actor, 0x4C4, &field);
                 BOOL logicalOK = tryActorLogicalPosition(actor, actorClass, &logical);
-                BOOL curOK = movePointerOK && moveControl &&
-                    readMoveComponentPosition(moveControl, "get_CurPosition", &cur);
-                BOOL remoteOK = movePointerOK && moveControl &&
-                    readMoveComponentPosition(moveControl, "get_RemotePosition", &remote);
                 int written = snprintf(samples + sampleUsed, sizeof(samples) - sampleUsed,
-                                       "%sid=%u ptr=0x%lx typed=%d field=(%.2f,%.2f,%.2f) logical=%s(%.2f,%.2f,%.2f) move=%s(%.2f,%.2f,%.2f) remote=%s(%.2f,%.2f,%.2f)",
+                                       "%sid=%u ptr=0x%lx typed=%d field=(%.2f,%.2f,%.2f) logical=%s(%.2f,%.2f,%.2f)",
                                        sampleUsed ? " | " : "", actorID, (uintptr_t)actor,
                                        typed ? 1 : 0,
                                        fieldOK ? field.x : 0.0f, fieldOK ? field.y : 0.0f,
                                        fieldOK ? field.z : 0.0f,
                                        logicalOK ? "ok" : "no",
-                                       logical.x, logical.y, logical.z,
-                                       curOK ? "ok" : "no",
-                                       cur.x, cur.y, cur.z,
-                                       remoteOK ? "ok" : "no",
-                                       remote.x, remote.y, remote.z);
+                                       logical.x, logical.y, logical.z);
                 if (written > 0 && (size_t)written < sizeof(samples) - sampleUsed)
                     sampleUsed += (size_t)written;
             }
@@ -1631,15 +1614,16 @@ static void probeActorDictionaryEntries(Il2CppObject *dictionary, const char *la
     }
 
     runtimeLog([NSString stringWithFormat:
-        @"actor dictionary probe name=%s class=%s count=%d enum=%s methods(count=%d,getEnum=%d,moveNext=%d,current=%d) iterated=%d actors=%d linkers=%d typed=%d targets=%d withMove=%d samples=%s",
+        @"actor dictionary probe name=%s class=%s count=%d enum=%s methods(count=%d,getEnum=%d,moveNext=%d,current=%d) iterated=%d actors=%d linkers=%d typed=%d targets=%d samples=%s",
         label, dictionaryName ?: "unknown", count, enumeratorName ?: "unknown",
         countOK ? 1 : 0, enumeratorMethod != NULL, moveNext != NULL,
         currentMethod != NULL, iterated, actorObjects, actorLinkers, typedMatches,
-        targetMatches, withMoveControl, sampleUsed ? samples : "none"]);
+        targetMatches, sampleUsed ? samples : "none"]);
 }
 
 static void probeActorManagerContainers(void *actorClass, Il2CppObject *actorManager) {
     static int lastCount = -2;
+    static BOOL enumerationDisabledLogged = NO;
     if (!actorClass || !actorManager) return;
     const Il2CppMethodInfo *actorListGetter = resolveMethod(actorClass, "get_ActorList", 0);
     if (!actorListGetter) {
@@ -1657,19 +1641,13 @@ static void probeActorManagerContainers(void *actorClass, Il2CppObject *actorMan
     BOOL countOK = NO;
     int count = readBoxedIntResult(countMethod, actorList, NULL, &countOK);
     if (!countOK) count = -1;
-    if (count != lastCount) {
-        lastCount = count;
-        runtimeLog([NSString stringWithFormat:
-            @"actor container actorList object=0x%lx class=%s count=%d countMethod=%d",
-            (uintptr_t)actorList, listName ?: "unknown", count, countMethod != NULL]);
-    }
-
-    static NSTimeInterval lastEnumeration = 0.0;
-    NSTimeInterval now = [[NSDate date] timeIntervalSince1970];
-    if (count > 0 && (lastEnumeration <= 0.0 || now - lastEnumeration >= 2.0)) {
-        lastEnumeration = now;
-        probeActorDictionaryEntries(actorList, "actorList");
-    }
+    runtimeLogOnce(&enumerationDisabledLogged,
+        @"actor dictionary enumeration disabled reason=boxed value-type Enumerator ABI; count-only probe retained");
+    if (count == lastCount) return;
+    lastCount = count;
+    runtimeLog([NSString stringWithFormat:
+        @"actor container actorList object=0x%lx class=%s count=%d countMethod=%d",
+        (uintptr_t)actorList, listName ?: "unknown", count, countMethod != NULL]);
 }
 
 static void updateProjectionViewport(void) {
