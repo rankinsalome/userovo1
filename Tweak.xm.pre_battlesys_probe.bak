@@ -565,8 +565,6 @@ typedef const char* (*il2cpp_class_get_name_t)(void* klass);
 typedef const char* (*il2cpp_class_get_namespace_t)(void* klass);
 typedef void* (*il2cpp_class_from_name_t)(void* image, const char* ns, const char* name);
 typedef void* (*il2cpp_object_get_class_t)(Il2CppObject *obj);
-typedef void* (*il2cpp_class_get_field_from_name_t)(void* klass, const char* name);
-typedef void (*il2cpp_field_static_get_value_t)(void* field, void* value);
 /* Keep IL2CPP runtime types opaque.  A MethodInfo layout is version-specific;
  * runtime_invoke must receive the pointer returned by the exported resolver. */
 typedef Il2CppObject* (*il2cpp_runtime_invoke_t)(const Il2CppMethodInfo *method, void* obj, void** params, Il2CppException** exc);
@@ -577,8 +575,6 @@ typedef struct { float x, y, z; } Il2CppVector3;
 static void probeCandidateMethods(void *klass, const char *imageName, const char *classNs, const char *className);
 static BOOL isReadableExecutablePointer(void *ptr);
 static const Il2CppMethodInfo *resolveMethod(void *klass, const char *name, int args);
-static int readBoxedIntResult(const Il2CppMethodInfo *method, Il2CppObject *object,
-                              void **params, BOOL *ok);
 
 il2cpp_domain_get_t p_il2cpp_domain_get = NULL;
 il2cpp_domain_get_assemblies_t p_il2cpp_domain_get_assemblies = NULL;
@@ -594,16 +590,13 @@ il2cpp_object_get_class_t p_il2cpp_object_get_class = NULL;
 il2cpp_class_get_method_from_name_t p_il2cpp_class_get_method_from_name = NULL;
 il2cpp_runtime_invoke_t p_il2cpp_runtime_invoke = NULL;
 il2cpp_object_unbox_t p_il2cpp_object_unbox = NULL;
-il2cpp_class_get_field_from_name_t p_il2cpp_class_get_field_from_name = NULL;
-il2cpp_field_static_get_value_t p_il2cpp_field_static_get_value = NULL;
 
 bool initIl2CppAPI(void) {
     if (p_il2cpp_domain_get && p_il2cpp_domain_get_assemblies &&
         p_il2cpp_assembly_get_image && p_il2cpp_image_get_name &&
         p_il2cpp_image_get_class_count && p_il2cpp_image_get_class &&
         p_il2cpp_class_get_name && p_il2cpp_class_get_namespace &&
-        p_il2cpp_class_from_name && p_il2cpp_class_get_method_from_name &&
-        p_il2cpp_class_get_field_from_name && p_il2cpp_field_static_get_value)
+        p_il2cpp_class_from_name && p_il2cpp_class_get_method_from_name)
         return true;
 
     p_il2cpp_domain_get = (il2cpp_domain_get_t)dlsym(RTLD_DEFAULT, "il2cpp_domain_get");
@@ -620,8 +613,6 @@ bool initIl2CppAPI(void) {
     p_il2cpp_class_get_method_from_name = (il2cpp_class_get_method_from_name_t)dlsym(RTLD_DEFAULT, "il2cpp_class_get_method_from_name");
     p_il2cpp_runtime_invoke = (il2cpp_runtime_invoke_t)dlsym(RTLD_DEFAULT, "il2cpp_runtime_invoke");
     p_il2cpp_object_unbox = (il2cpp_object_unbox_t)dlsym(RTLD_DEFAULT, "il2cpp_object_unbox");
-    p_il2cpp_class_get_field_from_name = (il2cpp_class_get_field_from_name_t)dlsym(RTLD_DEFAULT, "il2cpp_class_get_field_from_name");
-    p_il2cpp_field_static_get_value = (il2cpp_field_static_get_value_t)dlsym(RTLD_DEFAULT, "il2cpp_field_static_get_value");
 
     if (!p_il2cpp_domain_get || !p_il2cpp_domain_get_assemblies ||
         !p_il2cpp_assembly_get_image || !p_il2cpp_image_get_name ||
@@ -639,10 +630,8 @@ bool initIl2CppAPI(void) {
         runtimeLog([NSString stringWithFormat:@"il2cpp object_get_class=%d", p_il2cpp_object_get_class != NULL]);
         return false;
     }
-    runtimeLog([NSString stringWithFormat:@"il2cpp API resolved via dlsym runtime_invoke=%d object_unbox=%d object_get_class=%d field=%d staticGet=%d",
-        p_il2cpp_runtime_invoke != NULL, p_il2cpp_object_unbox != NULL,
-        p_il2cpp_object_get_class != NULL, p_il2cpp_class_get_field_from_name != NULL,
-        p_il2cpp_field_static_get_value != NULL]);
+    runtimeLog([NSString stringWithFormat:@"il2cpp API resolved via dlsym runtime_invoke=%d object_unbox=%d object_get_class=%d",
+        p_il2cpp_runtime_invoke != NULL, p_il2cpp_object_unbox != NULL, p_il2cpp_object_get_class != NULL]);
     return true;
 }
 
@@ -770,20 +759,14 @@ static void logCompactRuntimeBootstrap(void) {
     void *players = core ? p_il2cpp_class_from_name(core, "Assets.Scripts.GameLogic", "GamePlayerCenter") : NULL;
     void *linker = base ? p_il2cpp_class_from_name(base, "Assets.Scripts.GameLogic", "IActorLinker") : NULL;
     void *camera = unity ? p_il2cpp_class_from_name(unity, "UnityEngine", "Camera") : NULL;
-    void *battle = base ? p_il2cpp_class_from_name(base, "", "BattleSysMgr") : NULL;
-    BOOL providerFields = battle && p_il2cpp_class_get_field_from_name &&
-        p_il2cpp_class_get_field_from_name(battle, "CameraSystem") &&
-        p_il2cpp_class_get_field_from_name(battle, "ActorManager") &&
-        p_il2cpp_class_get_field_from_name(battle, "GamePlayerCenter");
-    BOOL chainMethods = actor && resolveMethod(actor, "GetActorTotalCount", 0) &&
+    BOOL chainMethods = actor && resolveMethod(actor, "get_instance", 0) &&
         resolveMethod(actor, "GetHeroActorCount", 0) &&
         resolveMethod(actor, "GetHeroActorByIndex", 1) && linker &&
         resolveMethod(linker, "get_Position", 0);
     runtimeLog([NSString stringWithFormat:
-        @"bootstrap api=1 assemblies=%lu images(core=%d base=%d unity=%d) classes(actor=%d players=%d linker=%d camera=%d battle=%d) providerFields=%d actorChainMethods=%d",
+        @"bootstrap api=1 assemblies=%lu images(core=%d base=%d unity=%d) classes(actor=%d players=%d linker=%d camera=%d) heroChainMethods=%d",
         (unsigned long)assemblyCount, core != NULL, base != NULL, unity != NULL,
-        actor != NULL, players != NULL, linker != NULL, camera != NULL, battle != NULL,
-        providerFields, chainMethods]);
+        actor != NULL, players != NULL, linker != NULL, camera != NULL, chainMethods]);
 }
 
 static const Il2CppMethodInfo *resolveMethod(void *klass, const char *name, int args) {
@@ -795,55 +778,6 @@ static Il2CppObject *invokeMethod(const Il2CppMethodInfo *method, Il2CppObject *
                                   void **params, Il2CppException **exception) {
     if (!method || !p_il2cpp_runtime_invoke) return NULL;
     return p_il2cpp_runtime_invoke(method, object, params, exception);
-}
-
-/* BattleSysMgr exposes the live systems as static Func<T> delegates.  The
- * managed dump does not declare get_instance methods for these systems, so
- * resolve the static field, then invoke the delegate through IL2CPP. */
-static Il2CppObject *invokeBattleProviderField(void *baseImage, const char *fieldName,
-                                               BOOL *fieldOK, BOOL *invokeOK) {
-    if (fieldOK) *fieldOK = NO;
-    if (invokeOK) *invokeOK = NO;
-    if (!baseImage || !fieldName || !p_il2cpp_class_from_name ||
-        !p_il2cpp_class_get_field_from_name || !p_il2cpp_field_static_get_value ||
-        !p_il2cpp_runtime_invoke || !p_il2cpp_object_get_class) return NULL;
-
-    void *battleClass = p_il2cpp_class_from_name(baseImage, "", "BattleSysMgr");
-    void *field = battleClass ? p_il2cpp_class_get_field_from_name(battleClass, fieldName) : NULL;
-    if (!field) return NULL;
-    if (fieldOK) *fieldOK = YES;
-
-    Il2CppObject *delegate = NULL;
-    p_il2cpp_field_static_get_value(field, &delegate);
-    if (!delegate) return NULL;
-    void *delegateClass = p_il2cpp_object_get_class(delegate);
-    const Il2CppMethodInfo *invoke = resolveMethod(delegateClass, "Invoke", 0);
-    if (!invoke) return NULL;
-
-    Il2CppException *exception = NULL;
-    Il2CppObject *instance = invokeMethod(invoke, delegate, NULL, &exception);
-    if (exception || !instance) return NULL;
-    if (invokeOK) *invokeOK = YES;
-    return instance;
-}
-
-static void logBattleProviderState(Il2CppObject *cameraSystem,
-                                   Il2CppObject *actorManager, Il2CppObject *playerCenter) {
-    static uintptr_t lastCamera = 0;
-    static uintptr_t lastActor = 0;
-    static uintptr_t lastPlayer = 0;
-    uintptr_t cameraPtr = (uintptr_t)cameraSystem;
-    uintptr_t actorPtr = (uintptr_t)actorManager;
-    uintptr_t playerPtr = (uintptr_t)playerCenter;
-    if (cameraPtr == lastCamera && actorPtr == lastActor && playerPtr == lastPlayer) return;
-    lastCamera = cameraPtr;
-    lastActor = actorPtr;
-    lastPlayer = playerPtr;
-    runtimeLog([NSString stringWithFormat:
-        @"battle providers camera=0x%lx actor=0x%lx player=0x%lx fieldAPI=%d staticGetAPI=%d",
-        cameraPtr, actorPtr, playerPtr,
-        p_il2cpp_class_get_field_from_name != NULL,
-        p_il2cpp_field_static_get_value != NULL]);
 }
 
 static BOOL readObjectClassName(Il2CppObject *object, char *name, size_t nameCap,
@@ -1135,16 +1069,14 @@ static void logActorMovementDiagnostic(Il2CppObject *actor, const char *label) {
     Il2CppVector3 field = {0, 0, 0};
     Il2CppVector3 logical = {0, 0, 0};
     Il2CppObject *moveControl = NULL;
-    uint32_t actorID = 0;
-    readUInt32Field(actor, 0x4AC, &actorID);
     BOOL sources = readActorMovementSources(actor, &cur, &remote, &field, &moveControl);
     BOOL logicalOK = tryActorLogicalPosition(actor, objectClass, &logical);
     enum ActorPositionSource selected = kActorPositionNone;
     Il2CppVector3 selectedValue = {0, 0, 0};
     readActorPositionWithMovement(actor, objectClass, &selectedValue, &selected);
     runtimeLog([NSString stringWithFormat:
-        @"movement diagnostic label=%s actor=0x%lx id=%u move=0x%lx sources=%d logical=%s field=(%.2f,%.2f,%.2f) cur=(%.2f,%.2f,%.2f) remote=(%.2f,%.2f,%.2f) selected=%d selectedPos=(%.2f,%.2f,%.2f)",
-        label ?: "actor", (uintptr_t)actor, actorID, (uintptr_t)moveControl, sources ? 1 : 0,
+        @"movement diagnostic label=%s actor=0x%lx move=0x%lx sources=%d logical=%s field=(%.2f,%.2f,%.2f) cur=(%.2f,%.2f,%.2f) remote=(%.2f,%.2f,%.2f) selected=%d selectedPos=(%.2f,%.2f,%.2f)",
+        label ?: "actor", (uintptr_t)actor, (uintptr_t)moveControl, sources ? 1 : 0,
         logicalOK ? "ok" : "no", field.x, field.y, field.z, cur.x, cur.y, cur.z,
         remote.x, remote.y, remote.z, selected, selectedValue.x, selectedValue.y,
         selectedValue.z]);
@@ -1503,32 +1435,6 @@ static int readBoxedIntResult(const Il2CppMethodInfo *method, Il2CppObject *obje
     return *raw;
 }
 
-static void probeActorManagerContainers(void *actorClass, Il2CppObject *actorManager) {
-    static int lastCount = -2;
-    if (!actorClass || !actorManager) return;
-    const Il2CppMethodInfo *actorListGetter = resolveMethod(actorClass, "get_ActorList", 0);
-    if (!actorListGetter) {
-        static BOOL getterLogged = NO;
-        runtimeLogOnce(&getterLogged, @"actor containers actorList getter unresolved");
-        return;
-    }
-    Il2CppException *exception = NULL;
-    Il2CppObject *actorList = invokeMethod(actorListGetter, actorManager, NULL, &exception);
-    if (!actorList || exception || !p_il2cpp_object_get_class) return;
-    void *listClass = p_il2cpp_object_get_class(actorList);
-    const char *listName = listClass && p_il2cpp_class_get_name
-        ? p_il2cpp_class_get_name(listClass) : NULL;
-    const Il2CppMethodInfo *countMethod = resolveMethod(listClass, "get_Count", 0);
-    BOOL countOK = NO;
-    int count = readBoxedIntResult(countMethod, actorList, NULL, &countOK);
-    if (!countOK) count = -1;
-    if (count == lastCount) return;
-    lastCount = count;
-    runtimeLog([NSString stringWithFormat:
-        @"actor container actorList object=0x%lx class=%s count=%d countMethod=%d",
-        (uintptr_t)actorList, listName ?: "unknown", count, countMethod != NULL]);
-}
-
 static void updateProjectionViewport(void) {
     float width = (float)[UIScreen mainScreen].bounds.size.width;
     float height = (float)[UIScreen mainScreen].bounds.size.height;
@@ -1792,12 +1698,11 @@ static void refreshActorSnapshotPositions(void) {
 
     NSTimeInterval diagnosticNow = [NSDate timeIntervalSinceReferenceDate];
     if (g_lastMovementDiagnostic <= 0.0 ||
-        diagnosticNow - g_lastMovementDiagnostic >= 1.0) {
+        diagnosticNow - g_lastMovementDiagnostic >= 5.0) {
         g_lastMovementDiagnostic = diagnosticNow;
         int logged = 0;
-        for (int i = 0; i < g_actorPositionRefCount50 && logged < 4; i++) {
+        for (int i = 0; i < g_actorPositionRefCount50 && logged < 2; i++) {
             if (!g_actorPositionRefs50[i].object) continue;
-            if (strstr(g_actorPositionRefs50[i].displayName, "BuffMonster") == NULL) continue;
             logActorMovementDiagnostic(g_actorPositionRefs50[i].object,
                                        g_actorPositionRefs50[i].displayName);
             logged++;
@@ -2106,21 +2011,6 @@ static void probeEntityManagers(void) {
         return;
     }
 
-    void *baseImage = findIl2CppImageNamed("Scripts.Base.dll");
-    Il2CppObject *battleCameraSystem = NULL;
-    Il2CppObject *battleActorManager = NULL;
-    Il2CppObject *battlePlayerCenter = NULL;
-    if (baseImage && p_il2cpp_class_get_field_from_name &&
-        p_il2cpp_field_static_get_value) {
-        battleCameraSystem = invokeBattleProviderField(baseImage, "CameraSystem", NULL, NULL);
-        battleActorManager = invokeBattleProviderField(baseImage, "ActorManager", NULL, NULL);
-        battlePlayerCenter = invokeBattleProviderField(baseImage, "GamePlayerCenter", NULL, NULL);
-        logBattleProviderState(battleCameraSystem, battleActorManager, battlePlayerCenter);
-    } else {
-        static BOOL providerSkipLogged = NO;
-        runtimeLogOnce(&providerSkipLogged, @"battle providers skipped: static field API unavailable");
-    }
-
     struct ManagerProbe { const char *ns; const char *name; const char *getter; } probes[] = {
         { "Assets.Scripts.GameLogic", "ActorManager", "get_instance" },
         { "Assets.Scripts.GameLogic", "GamePlayerCenter", "get_instance" }
@@ -2133,25 +2023,19 @@ static void probeEntityManagers(void) {
     void *playerCenterClassForSemantics = NULL;
     for (size_t i = 0; i < sizeof(probes) / sizeof(probes[0]); i++) {
         void *klass = p_il2cpp_class_from_name(gameCoreImage, probes[i].ns, probes[i].name);
-        Il2CppObject *manager = NULL;
-        if (strcmp(probes[i].name, "ActorManager") == 0) manager = battleActorManager;
-        if (strcmp(probes[i].name, "GamePlayerCenter") == 0) manager = battlePlayerCenter;
-        BOOL providerUsed = manager != NULL;
-        const Il2CppMethodInfo *getter = NULL;
-        if (!providerUsed) {
-            getter = klass ? p_il2cpp_class_get_method_from_name(klass, probes[i].getter, 0) : NULL;
-        }
-        if (!klass || (!providerUsed && !getter)) {
+        const Il2CppMethodInfo *getter = klass ?
+            p_il2cpp_class_get_method_from_name(klass, probes[i].getter, 0) : NULL;
+        if (!klass || !getter) {
             static BOOL unresolvedLogged[2] = { NO, NO };
             if (!unresolvedLogged[i]) {
                 unresolvedLogged[i] = YES;
-                runtimeLog([NSString stringWithFormat:@"manager unresolved class=%s source=%s method=%s",
-                    probes[i].name, providerUsed ? "BattleSysMgr" : "get_instance", probes[i].getter]);
+                runtimeLog([NSString stringWithFormat:@"manager unresolved class=%s method=%s",
+                    probes[i].name, probes[i].getter]);
             }
             continue;
         }
         Il2CppException *exception = NULL;
-        if (!providerUsed) manager = invokeMethod(getter, NULL, NULL, &exception);
+        Il2CppObject *manager = p_il2cpp_runtime_invoke(getter, NULL, NULL, &exception);
         if (!exception && strcmp(probes[i].name, "ActorManager") == 0) {
             actorManagerForChain = manager;
             actorClassForChain = klass;
@@ -2160,13 +2044,6 @@ static void probeEntityManagers(void) {
             playerCenterClassForSemantics = klass;
         }
         if (!manager || exception) continue;
-        static BOOL sourceLogged[2] = { NO, NO };
-        if (!sourceLogged[i]) {
-            sourceLogged[i] = YES;
-            runtimeLog([NSString stringWithFormat:@"manager resolved class=%s source=%s object=0x%lx",
-                probes[i].name, providerUsed ? "BattleSysMgr" : "get_instance",
-                (uintptr_t)manager]);
-        }
 
         const char *countMethodName = strcmp(probes[i].name, "ActorManager") == 0 ?
             "GetActorTotalCount" : "GetPlayerNum";
@@ -2193,7 +2070,6 @@ static void probeEntityManagers(void) {
             }
         }
     }
-    probeActorManagerContainers(actorClassForChain, actorManagerForChain);
     logActorCategoryCounts(actorClassForChain, actorManagerForChain);
     probePlayerSemanticCounts(playerCenterClassForSemantics, playerCenterForSemantics,
                               sampledPlayerCount);
@@ -2218,7 +2094,7 @@ static void probeEntityManagers(void) {
 
 /* 0 means run until the process enters background. */
 static const NSTimeInterval kEntitySamplingDuration = 0.0;
-static const NSTimeInterval kEntitySamplingInterval = 1.0;
+static const NSTimeInterval kEntitySamplingInterval = 2.0;
 static const NSTimeInterval kEntityPositionRefreshInterval = 1.0 / 30.0;
 static int g_entitySample = 0;
 static bool g_entitySampling = false;
