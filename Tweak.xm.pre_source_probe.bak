@@ -1487,8 +1487,6 @@ static NSTimeInterval g_lastMotionProbeLog = 0.0;
 static int g_positionRefreshValid50 = 0;
 static uint64_t g_positionRefreshCount = 0;
 static NSTimeInterval g_lastPositionRefreshLog = 0.0;
-static NSTimeInterval g_lastFocusedSourceProbeLog[4] = {0.0, 0.0, 0.0, 0.0};
-static BOOL g_sgwDebugMovementMethodLogged = NO;
 
 static int readBoxedIntResult(const Il2CppMethodInfo *method, Il2CppObject *object,
                               void **params, BOOL *ok) {
@@ -1833,96 +1831,6 @@ static BOOL isUsableActorWorld(Il2CppVector3 world) {
     return YES;
 }
 
-static BOOL isLiveMovementVector(Il2CppVector3 world) {
-    return isUsableActorWorld(world) && vectorLengthSq(world) > 0.0001f;
-}
-
-static BOOL findDisplayPosition(const RuntimeDisplayRecord *records, int count,
-                                uint32_t actorID, Il2CppVector3 *outPosition);
-
-/* Narrow source comparison for the next runtime run.  This is deliberately
- * read-only and capped to four BuffMonster objects.  It records raw read
- * status separately from coordinate usability so zero and sentinel values do
- * not masquerade as a live movement source. */
-static void probeFocusedBuffMonsterSources(Il2CppObject *actor, int index,
-                                           uint32_t actorID,
-                                           const RuntimeDisplayRecord *displayRecords,
-                                           int displayCount,
-                                           Il2CppVector3 selectedWorld,
-                                           BOOL selectedRead,
-                                           BOOL selectedFromDisplay) {
-    if (!actor || index < 0 || index >= 4) return;
-    NSTimeInterval now = [NSDate timeIntervalSinceReferenceDate];
-    if (g_lastFocusedSourceProbeLog[index] > 0.0 &&
-        now - g_lastFocusedSourceProbeLog[index] < 1.0) return;
-
-    Il2CppVector3 field = {0, 0, 0};
-    BOOL fieldRead = readVector3Field(actor, 0x4C4, &field);
-    Il2CppVector3 logical = {0, 0, 0};
-    void *actorClass = p_il2cpp_object_get_class ? p_il2cpp_object_get_class(actor) : NULL;
-    BOOL logicalRead = actorClass && tryActorLogicalPosition(actor, actorClass, &logical);
-    Il2CppVector3 cur = {0, 0, 0};
-    Il2CppVector3 remote = {0, 0, 0};
-    Il2CppObject *moveControl = NULL;
-    BOOL curRead = NO, remoteRead = NO, actorFieldRead = NO;
-    readActorMovementSources(actor, &cur, &remote, &moveControl,
-                             &curRead, &remoteRead, &actorFieldRead);
-
-    Il2CppVector3 display = {0, 0, 0};
-    BOOL displayHit = findDisplayPosition(displayRecords, displayCount, actorID, &display);
-    uint8_t logicVisible = 0, meshVisible = 0, inCamera = 0, rendererInCamera = 0;
-    uint8_t positionInCamera = 0, checkPositionInCamera = 0;
-    BOOL logicRead = readProcessBytes((uintptr_t)actor + 0x505, &logicVisible, sizeof(logicVisible));
-    BOOL meshRead = readProcessBytes((uintptr_t)actor + 0x506, &meshVisible, sizeof(meshVisible));
-    BOOL cameraRead = readProcessBytes((uintptr_t)actor + 0x507, &inCamera, sizeof(inCamera));
-    BOOL rendererRead = readProcessBytes((uintptr_t)actor + 0x508, &rendererInCamera, sizeof(rendererInCamera));
-    BOOL positionCameraRead = readProcessBytes((uintptr_t)actor + 0x520, &positionInCamera, sizeof(positionInCamera));
-    BOOL checkPositionRead = readProcessBytes((uintptr_t)actor + 0x521, &checkPositionInCamera, sizeof(checkPositionInCamera));
-    Il2CppVector3 screen = {-1, -1, -1};
-    BOOL projected = selectedRead && projectWorldPosition(selectedWorld, &screen) &&
-        isUsableActorScreen(screen);
-
-    runtimeLog([NSString stringWithFormat:
-        @"focused source idx=%d id=%u ptr=0x%lx move=0x%lx "
-         "fieldRead=%d fieldLive=%d field=(%.2f,%.2f,%.2f) "
-         "logicalRead=%d logicalLive=%d logical=(%.2f,%.2f,%.2f) "
-         "curRead=%d curLive=%d cur=(%.2f,%.2f,%.2f) "
-         "remoteRead=%d remoteLive=%d remote=(%.2f,%.2f,%.2f) "
-         "displayHit=%d displayLive=%d display=(%.2f,%.2f,%.2f) "
-         "vis=%d/%d/%d/%d camPos=%d check=%d actorFieldRead=%d readFlags=%d%d%d%d%d%d "
-         "selected=%s(%.2f,%.2f,%.2f) screen=%d(%.1f,%.1f,%.2f)",
-        index, actorID, (uintptr_t)actor, (uintptr_t)moveControl,
-        fieldRead ? 1 : 0, fieldRead && isLiveMovementVector(field) ? 1 : 0,
-        field.x, field.y, field.z,
-        logicalRead ? 1 : 0, logicalRead && isLiveMovementVector(logical) ? 1 : 0,
-        logical.x, logical.y, logical.z,
-        curRead ? 1 : 0, curRead && isLiveMovementVector(cur) ? 1 : 0,
-        cur.x, cur.y, cur.z,
-        remoteRead ? 1 : 0, remoteRead && isLiveMovementVector(remote) ? 1 : 0,
-        remote.x, remote.y, remote.z,
-        displayHit ? 1 : 0, displayHit && isLiveMovementVector(display) ? 1 : 0,
-        display.x, display.y, display.z,
-        logicVisible ? 1 : 0, meshVisible ? 1 : 0, inCamera ? 1 : 0, rendererInCamera ? 1 : 0,
-        positionInCamera ? 1 : 0, checkPositionInCamera ? 1 : 0,
-        actorFieldRead ? 1 : 0,
-        logicRead ? 1 : 0, meshRead ? 1 : 0, cameraRead ? 1 : 0,
-        rendererRead ? 1 : 0, positionCameraRead ? 1 : 0, checkPositionRead ? 1 : 0,
-        selectedRead ? (selectedFromDisplay ? "display" : "actor") : "none",
-        selectedWorld.x, selectedWorld.y, selectedWorld.z,
-        projected ? 1 : 0, screen.x, screen.y, screen.z]);
-    g_lastFocusedSourceProbeLog[index] = now;
-}
-
-static void probeSGWDebugMovementMethod(void *baseImage) {
-    if (g_sgwDebugMovementMethodLogged || !baseImage || !p_il2cpp_class_from_name) return;
-    void *sgwClass = p_il2cpp_class_from_name(baseImage, "", "SGW");
-    const Il2CppMethodInfo *method = resolveMethod(sgwClass, "GetDebugMovementData", 2);
-    g_sgwDebugMovementMethodLogged = YES;
-    runtimeLog([NSString stringWithFormat:
-        @"debug movement method class=%d method=0x%lx args=2 invokeDeferred=1",
-        sgwClass != NULL, (uintptr_t)method]);
-}
-
 static BOOL isUsableActorScreen(Il2CppVector3 screen) {
     return isfinite(screen.x) && isfinite(screen.y) && isfinite(screen.z) && screen.z > 0.0f;
 }
@@ -2113,10 +2021,10 @@ static void logMotionSourcesForHero(int slot, int actorIndex, uint32_t actorID,
     }
 
     int state = (sourceOK ? 1 : 0) |
-        (curRead && isLiveMovementVector(cur) ? 2 : 0) |
-        (remoteRead && isLiveMovementVector(remote) ? 4 : 0) |
-        (fieldRead && isLiveMovementVector(field) ? 8 : 0) |
-        (logicalOK && isLiveMovementVector(logical) ? 16 : 0);
+        (curRead && isUsableActorWorld(cur) ? 2 : 0) |
+        (remoteRead && isUsableActorWorld(remote) ? 4 : 0) |
+        (fieldRead && isUsableActorWorld(field) ? 8 : 0) |
+        (isUsableActorWorld(logical) ? 16 : 0);
     uint32_t previousID = (slot >= 0 && slot < 16) ? g_motionProbeLastIDs[slot] : 0;
     int previousState = (slot >= 0 && slot < 16) ? g_motionProbeLastStates[slot] : -1;
     NSTimeInterval now = [NSDate timeIntervalSinceReferenceDate];
@@ -2130,10 +2038,10 @@ static void logMotionSourcesForHero(int slot, int actorIndex, uint32_t actorID,
     runtimeLog([NSString stringWithFormat:
         @"motion probe idx=%d id=%u state=0x%02x move=0x%lx curRead=%d cur=%d(%.2f,%.2f,%.2f) remoteRead=%d remote=%d(%.2f,%.2f,%.2f) fieldRead=%d field=%d(%.2f,%.2f,%.2f) logical=%d(%.2f,%.2f,%.2f)",
         actorIndex, actorID, state, (uintptr_t)moveControl,
-        curRead ? 1 : 0, curRead && isLiveMovementVector(cur) ? 1 : 0, cur.x, cur.y, cur.z,
-        remoteRead ? 1 : 0, remoteRead && isLiveMovementVector(remote) ? 1 : 0, remote.x, remote.y, remote.z,
-        fieldRead ? 1 : 0, fieldRead && isLiveMovementVector(field) ? 1 : 0, field.x, field.y, field.z,
-        logicalOK && isLiveMovementVector(logical) ? 1 : 0,
+        curRead ? 1 : 0, curRead && isUsableActorWorld(cur) ? 1 : 0, cur.x, cur.y, cur.z,
+        remoteRead ? 1 : 0, remoteRead && isUsableActorWorld(remote) ? 1 : 0, remote.x, remote.y, remote.z,
+        fieldRead ? 1 : 0, fieldRead && isUsableActorWorld(field) ? 1 : 0, field.x, field.y, field.z,
+        logicalOK && isUsableActorWorld(logical) ? 1 : 0,
         logical.x, logical.y, logical.z]);
 }
 
@@ -2351,12 +2259,6 @@ static void probeActorSnapshot50(void *actorClass, Il2CppObject *actorManager) {
                     isUsableActorWorld(cachedWorld);
                 if (positionOK) world = cachedWorld;
             }
-            if (source == 2 && index < 4) {
-                BOOL selectedFromDisplay = !isLiveMovementVector(liveWorld) && positionOK;
-                probeFocusedBuffMonsterSources(actor, index, actorID,
-                                               displayRecords, displayCount,
-                                               world, positionOK, selectedFromDisplay);
-            }
             if (positionOK) sourcePositionOK++;
             if (!positionOK || !isUsableActorWorld(world)) continue;
             Il2CppVector3 screen = {-1, -1, -1};
@@ -2473,7 +2375,6 @@ static void probeEntityManagers(void) {
     }
 
     void *baseImage = findIl2CppImageNamed("Scripts.Base.dll");
-    probeSGWDebugMovementMethod(baseImage);
     Il2CppObject *battleCameraSystem = NULL;
     Il2CppObject *battleActorManager = NULL;
     Il2CppObject *battlePlayerCenter = NULL;
