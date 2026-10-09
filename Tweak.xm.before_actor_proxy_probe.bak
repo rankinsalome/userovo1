@@ -577,7 +577,6 @@ typedef struct { float x, y, z; } Il2CppVector3;
 static void probeCandidateMethods(void *klass, const char *imageName, const char *classNs, const char *className);
 static BOOL isReadableExecutablePointer(void *ptr);
 static const Il2CppMethodInfo *resolveMethod(void *klass, const char *name, int args);
-static void probeTrackedHeroActorProxies(void);
 static int readBoxedIntResult(const Il2CppMethodInfo *method, Il2CppObject *object,
                               void **params, BOOL *ok);
 
@@ -959,6 +958,7 @@ static BOOL readActorMovementSources(Il2CppObject *actor, Il2CppVector3 *cur,
 }
 
 static BOOL g_movementSourceLogged[6] = { NO, NO, NO, NO, NO, NO };
+static NSTimeInterval g_lastMovementDiagnostic = 0.0;
 
 static BOOL isFiniteVector3(Il2CppVector3 value) {
     return isfinite(value.x) && isfinite(value.y) && isfinite(value.z);
@@ -1123,6 +1123,32 @@ static BOOL readActorPositionWithMovement(Il2CppObject *object, void *objectClas
         return YES;
     }
     return NO;
+}
+
+static void logActorMovementDiagnostic(Il2CppObject *actor, const char *label) {
+    if (!actor || !p_il2cpp_object_get_class) return;
+    void *objectClass = p_il2cpp_object_get_class(actor);
+    const char *className = objectClass && p_il2cpp_class_get_name
+        ? p_il2cpp_class_get_name(objectClass) : NULL;
+    if (!className || strcmp(className, "ActorLinker") != 0) return;
+    Il2CppVector3 cur = {0, 0, 0};
+    Il2CppVector3 remote = {0, 0, 0};
+    Il2CppVector3 field = {0, 0, 0};
+    Il2CppVector3 logical = {0, 0, 0};
+    Il2CppObject *moveControl = NULL;
+    uint32_t actorID = 0;
+    readUInt32Field(actor, 0x4AC, &actorID);
+    BOOL sources = readActorMovementSources(actor, &cur, &remote, &field, &moveControl);
+    BOOL logicalOK = tryActorLogicalPosition(actor, objectClass, &logical);
+    enum ActorPositionSource selected = kActorPositionNone;
+    Il2CppVector3 selectedValue = {0, 0, 0};
+    readActorPositionWithMovement(actor, objectClass, &selectedValue, &selected);
+    runtimeLog([NSString stringWithFormat:
+        @"movement diagnostic label=%s actor=0x%lx id=%u move=0x%lx sources=%d logical=%s field=(%.2f,%.2f,%.2f) cur=(%.2f,%.2f,%.2f) remote=(%.2f,%.2f,%.2f) selected=%d selectedPos=(%.2f,%.2f,%.2f)",
+        label ?: "actor", (uintptr_t)actor, actorID, (uintptr_t)moveControl, sources ? 1 : 0,
+        logicalOK ? "ok" : "no", field.x, field.y, field.z, cur.x, cur.y, cur.z,
+        remote.x, remote.y, remote.z, selected, selectedValue.x, selectedValue.y,
+        selectedValue.z]);
 }
 
 static BOOL readObjectPosition(Il2CppObject *object, Il2CppVector3 *outPosition) {
@@ -1462,13 +1488,6 @@ typedef struct {
 
 static ActorPositionRef50 g_actorPositionRefs50[512];
 static int g_actorPositionRefCount50 = 0;
-static Il2CppObject *g_proxyProbeActorManager = NULL;
-static void *g_proxyProbeActorManagerClass = NULL;
-static uintptr_t g_proxyProbeManagerIdentity = 0;
-static uint32_t g_trackedHeroActorIDs[16] = {0};
-static int g_trackedHeroActorIndexes[16] = {0};
-static int g_trackedHeroActorCount = 0;
-static NSTimeInterval g_lastActorProxyProbe = 0.0;
 static int g_positionRefreshValid50 = 0;
 static uint64_t g_positionRefreshCount = 0;
 static NSTimeInterval g_lastPositionRefreshLog = 0.0;
@@ -1606,7 +1625,7 @@ static void probeActorDictionaryEntries(Il2CppObject *dictionary, const char *la
 
 static void probeActorManagerContainers(void *actorClass, Il2CppObject *actorManager) {
     static int lastCount = -2;
-    static BOOL enumerationDisabledLogged = NO;
+    static NSTimeInterval lastEntryProbe = 0.0;
     if (!actorClass || !actorManager) return;
     const Il2CppMethodInfo *actorListGetter = resolveMethod(actorClass, "get_ActorList", 0);
     if (!actorListGetter) {
@@ -1624,8 +1643,16 @@ static void probeActorManagerContainers(void *actorClass, Il2CppObject *actorMan
     BOOL countOK = NO;
     int count = readBoxedIntResult(countMethod, actorList, NULL, &countOK);
     if (!countOK) count = -1;
-    runtimeLogOnce(&enumerationDisabledLogged,
-        @"actor dictionary enumeration disabled reason=boxed value-type Enumerator ABI; count-only probe retained");
+    NSTimeInterval now = [NSDate timeIntervalSinceReferenceDate];
+    if (lastEntryProbe <= 0.0 || now - lastEntryProbe >= 2.0) {
+        lastEntryProbe = now;
+        probeActorDictionaryEntries(actorList, "actorList");
+        Il2CppObject *updatableList = NULL;
+        if (readObjectPointerField(actorManager, 0x10, &updatableList))
+            probeActorDictionaryEntries(updatableList, "updatableActorList");
+        else
+            runtimeLog(@"actor dictionary probe name=updatableActorList field=0x10 unresolved");
+    }
     if (count == lastCount) return;
     lastCount = count;
     runtimeLog([NSString stringWithFormat:
@@ -1891,9 +1918,22 @@ static int appendUnmatchedDisplayCacheSnapshot(const RuntimeDisplayRecord *recor
 }
 
 static void refreshActorSnapshotPositions(void) {
-    probeTrackedHeroActorProxies();
     if (!g_singleHeroSuccess || g_actorPositionRefCount50 <= 0) return;
     if (!prepareProjectionContext()) return;
+
+    NSTimeInterval diagnosticNow = [NSDate timeIntervalSinceReferenceDate];
+    if (g_lastMovementDiagnostic <= 0.0 ||
+        diagnosticNow - g_lastMovementDiagnostic >= 1.0) {
+        g_lastMovementDiagnostic = diagnosticNow;
+        int logged = 0;
+        for (int i = 0; i < g_actorPositionRefCount50 && logged < 4; i++) {
+            if (!g_actorPositionRefs50[i].object) continue;
+            if (strstr(g_actorPositionRefs50[i].displayName, "BuffMonster") == NULL) continue;
+            logActorMovementDiagnostic(g_actorPositionRefs50[i].object,
+                                       g_actorPositionRefs50[i].displayName);
+            logged++;
+        }
+    }
 
     RuntimeDisplayRecord displayRecords[512] = {};
     int displayCount = 0;
@@ -1949,79 +1989,6 @@ static void cacheActorPositionRef50(Il2CppObject *actor, const char *displayName
     readUInt32Field(actor, 0x4AC, &ref->actorID);
     if (displayName) strncpy(ref->displayName, displayName, sizeof(ref->displayName) - 1);
     if (namespaceName) strncpy(ref->namespaceName, namespaceName, sizeof(ref->namespaceName) - 1);
-}
-
-static void rememberHeroActorID(uint32_t actorID, int actorIndex) {
-    if (!actorID) return;
-    for (int i = 0; i < g_trackedHeroActorCount; i++) {
-        if (g_trackedHeroActorIndexes[i] == actorIndex || g_trackedHeroActorIDs[i] == actorID) {
-            g_trackedHeroActorIDs[i] = actorID;
-            g_trackedHeroActorIndexes[i] = actorIndex;
-            return;
-        }
-    }
-    if (g_trackedHeroActorCount >= (int)(sizeof(g_trackedHeroActorIDs) / sizeof(g_trackedHeroActorIDs[0]))) return;
-    int slot = g_trackedHeroActorCount++;
-    g_trackedHeroActorIDs[slot] = actorID;
-    g_trackedHeroActorIndexes[slot] = actorIndex;
-}
-
-static void probeTrackedHeroActorProxies(void) {
-    if (!g_proxyProbeActorManager || !g_proxyProbeActorManagerClass ||
-        g_trackedHeroActorCount <= 0 || !p_il2cpp_runtime_invoke) return;
-    NSTimeInterval now = [NSDate timeIntervalSinceReferenceDate];
-    if (g_lastActorProxyProbe > 0.0 && now - g_lastActorProxyProbe < 1.0) return;
-    g_lastActorProxyProbe = now;
-    const Il2CppMethodInfo *proxyMethod = resolveMethod(g_proxyProbeActorManagerClass, "GetActorProxy", 2);
-    if (!proxyMethod) {
-        static BOOL methodMissingLogged = NO;
-        runtimeLogOnce(&methodMissingLogged, @"actor proxy probe unresolved method=GetActorProxy args=2");
-        return;
-    }
-    char samples[3500] = {0};
-    size_t used = 0;
-    int queried = 0, returned = 0;
-    for (int i = 0; i < g_trackedHeroActorCount; i++) {
-        uint32_t actorID = g_trackedHeroActorIDs[i];
-        int32_t managedActorID = (int32_t)actorID;
-        uint8_t alwaysFind = 1;
-        void *params[2] = { &managedActorID, &alwaysFind };
-        Il2CppException *exception = NULL;
-        Il2CppObject *proxy = invokeMethod(proxyMethod, g_proxyProbeActorManager, params, &exception);
-        queried++;
-        if (exception) proxy = NULL;
-        if (proxy) returned++;
-        Il2CppObject *categoryObject = NULL;
-        for (int j = 0; j < g_actorPositionRefCount50; j++) {
-            if (g_actorPositionRefs50[j].actorID == actorID) {
-                categoryObject = g_actorPositionRefs50[j].object;
-                break;
-            }
-        }
-        uint32_t categoryID = 0, proxyID = 0;
-        if (categoryObject) readUInt32Field(categoryObject, 0x4AC, &categoryID);
-        if (proxy) readUInt32Field(proxy, 0x4AC, &proxyID);
-        Il2CppVector3 categoryPos = {0, 0, 0}, proxyPos = {0, 0, 0};
-        BOOL categoryPosOK = categoryObject && categoryID == actorID &&
-            readVector3Field(categoryObject, 0x4C4, &categoryPos);
-        char proxyClassName[64] = {0}, proxyNamespace[64] = {0};
-        BOOL proxyClassOK = proxy && readObjectClassName(proxy, proxyClassName,
-            sizeof(proxyClassName), proxyNamespace, sizeof(proxyNamespace)) &&
-            strcmp(proxyClassName, "ActorLinker") == 0;
-        BOOL proxyPosOK = proxyClassOK && proxyID == actorID &&
-            readObjectPosition(proxy, &proxyPos);
-        int written = snprintf(samples + used, sizeof(samples) - used,
-            "%sidx=%d id=%u cat=0x%lx catId=%u catPos=%d(%.2f,%.2f,%.2f) proxy=0x%lx proxyId=%u class=%s proxyPos=%d(%.2f,%.2f,%.2f) ex=%d",
-            used ? " | " : "", g_trackedHeroActorIndexes[i], actorID,
-            (uintptr_t)categoryObject, categoryID, categoryPosOK ? 1 : 0,
-            categoryPos.x, categoryPos.y, categoryPos.z,
-            (uintptr_t)proxy, proxyID, proxyClassName[0] ? proxyClassName : "unknown",
-            proxyPosOK ? 1 : 0, proxyPos.x, proxyPos.y, proxyPos.z,
-            exception != NULL);
-        if (written > 0 && (size_t)written < sizeof(samples) - used) used += (size_t)written;
-    }
-    runtimeLog([NSString stringWithFormat:@"actor proxy probe queried=%d returned=%d tracked=%d samples=%s",
-        queried, returned, g_trackedHeroActorCount, used ? samples : "none"]);
 }
 
 static int appendSupplementalActorList(void *actorClass, Il2CppObject *actorManager,
@@ -2136,15 +2103,7 @@ static void probeActorSnapshot50(void *actorClass, Il2CppObject *actorManager) {
         if (!countMethod || !itemMethod) continue;
         BOOL countOK = NO;
         int sourceCount = readBoxedIntResult(countMethod, actorManager, NULL, &countOK);
-        if (!countOK || sourceCount < 0) continue;
-        if (sourceCount == 0) {
-            if (source == 0) {
-                memset(g_trackedHeroActorIDs, 0, sizeof(g_trackedHeroActorIDs));
-                memset(g_trackedHeroActorIndexes, 0, sizeof(g_trackedHeroActorIndexes));
-                g_trackedHeroActorCount = 0;
-            }
-            continue;
-        }
+        if (!countOK || sourceCount <= 0) continue;
         if (sourceCount > 64) sourceCount = 64;
         int sourceObjects = 0;
         int sourcePositionOK = 0;
@@ -2163,7 +2122,6 @@ static void probeActorSnapshot50(void *actorClass, Il2CppObject *actorManager) {
             Il2CppVector3 world = {0, 0, 0};
             uint32_t actorID = 0;
             readUInt32Field(actor, 0x4AC, &actorID);
-            if (source == 0) rememberHeroActorID(actorID, index);
             BOOL positionOK = actorID && findDisplayPosition(displayRecords, displayCount, actorID, &world);
             if (!positionOK) positionOK = readObjectPosition(actor, &world);
             if (positionOK) sourcePositionOK++;
@@ -2371,19 +2329,6 @@ static void probeEntityManagers(void) {
     probePlayerSemanticCounts(playerCenterClassForSemantics, playerCenterForSemantics,
                               sampledPlayerCount);
     probeSingleHeroActor(gameCoreImage, actorManagerForChain, actorClassForChain);
-    uintptr_t managerIdentity = (uintptr_t)actorManagerForChain;
-    if (managerIdentity != g_proxyProbeManagerIdentity) {
-        g_proxyProbeManagerIdentity = managerIdentity;
-        g_proxyProbeActorManager = actorManagerForChain;
-        g_proxyProbeActorManagerClass = actorClassForChain;
-        memset(g_trackedHeroActorIDs, 0, sizeof(g_trackedHeroActorIDs));
-        memset(g_trackedHeroActorIndexes, 0, sizeof(g_trackedHeroActorIndexes));
-        g_trackedHeroActorCount = 0;
-        g_lastActorProxyProbe = 0.0;
-        runtimeLog([NSString stringWithFormat:
-            @"actor proxy probe manager changed object=0x%lx; tracked IDs reset",
-            managerIdentity]);
-    }
     probeActorSnapshot50(actorClassForChain, actorManagerForChain);
     espSetRuntimeDiagnostics(sampledActorCount, sampledPlayerCount, g_cameraProbeValid);
     espSetRuntimeEntityCount(g_actorSnapshot50Valid);
