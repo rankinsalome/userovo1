@@ -2258,6 +2258,22 @@ static void probePlayerCaptainChain(Il2CppObject *center, void *centerClass) {
         return;
     }
 
+    /* Official logic-layer world position: LuaCallCs_Battle.GetActorWorldPos(UInt32) -> Vector3.
+       Resolve once per probe and call with the captain's ObjID (actorID). */
+    static const Il2CppMethodInfo *getWorldPos = (const Il2CppMethodInfo *)-1;
+    static BOOL worldPosResolved = NO;
+    if (!worldPosResolved) {
+        worldPosResolved = YES;
+        void *coreImage = findIl2CppImageNamed("Scripts.GameCore.dll");
+        void *luaBattle = coreImage && p_il2cpp_class_from_name
+            ? p_il2cpp_class_from_name(coreImage, "", "LuaCallCs_Battle") : NULL;
+        getWorldPos = resolveMethod(luaBattle, "GetActorWorldPos", 1);
+        if (!getWorldPos) {
+            runtimeLogOnce(&methodLogged,
+                @"player captain chain unresolved LuaCallCs_Battle.GetActorWorldPos(args=1)");
+        }
+    }
+
     char summary[4096] = {0};
     size_t used = 0;
     int resolved = 0, withCaptain = 0, withMove = 0;
@@ -2287,10 +2303,14 @@ static void probePlayerCaptainChain(Il2CppObject *center, void *centerClass) {
         uintptr_t moveControl = 0;
         Il2CppVector3 field = {0, 0, 0}, cur = {0, 0, 0}, remote = {0, 0, 0};
         BOOL fieldOK = NO, curOK = NO, remoteOK = NO;
+        uint32_t captainObjID = 0;
+        Il2CppVector3 worldPos = {0, 0, 0};
+        BOOL worldPosOK = NO;
         char captainClass[48] = {0}, captainNs[48] = {0};
         if (captainOK) {
             readObjectClassName((Il2CppObject *)captainObj, captainClass, sizeof(captainClass),
                                 captainNs, sizeof(captainNs));
+            readUInt32Field((Il2CppObject *)captainObj, 0x4AC, &captainObjID);
             readProcessBytes(captainObj + 0x420, &moveControl, sizeof(moveControl));
             if (moveControl && isPlausibleObjectPointer(moveControl)) withMove++;
             fieldOK = readVector3Field((Il2CppObject *)captainObj, 0x4C4, &field);
@@ -2300,9 +2320,20 @@ static void probePlayerCaptainChain(Il2CppObject *center, void *centerClass) {
             }
         }
 
+        /* Official logic world position by actorID (captain ObjID). */
+        if (getWorldPos && getWorldPos != (const Il2CppMethodInfo *)-1 && captainObjID) {
+            uint32_t worldActorID = captainObjID;
+            void *wp[1] = { &worldActorID };
+            Il2CppException *wpExc = NULL;
+            Il2CppObject *wpBoxed = invokeMethod(getWorldPos, NULL, wp, &wpExc);
+            worldPosOK = decodeBoxedVector3(wpBoxed, wpExc, &worldPos);
+        }
+
         int written = snprintf(summary + used, sizeof(summary) - used,
-            "%sidx=%d player=0x%lx camp=%u campPos=%d id=%u logic=(%d,%d,%d) captain=%d(%s:0x%lx) move=%d(0x%lx) field=%d(%.1f,%.1f,%.1f) cur=%d(%.1f,%.1f,%.1f) remote=%d(%.1f,%.1f,%.1f)",
+            "%sidx=%d player=0x%lx camp=%u campPos=%d id=%u actorID=%u worldPos=%d(%.1f,%.1f,%.1f) logic=(%d,%d,%d) captain=%d(%s:0x%lx) move=%d(0x%lx) field=%d(%.1f,%.1f,%.1f) cur=%d(%.1f,%.1f,%.1f) remote=%d(%.1f,%.1f,%.1f)",
             used ? " | " : "", i, (uintptr_t)player, camp, campPos, playerId,
+            captainObjID,
+            worldPosOK ? 1 : 0, worldPos.x, worldPos.y, worldPos.z,
             logicRaw[0], logicRaw[1], logicRaw[2],
             captainOK ? 1 : 0, captainClass[0] ? captainClass : "?", captainObj,
             moveControl ? 1 : 0, moveControl,
