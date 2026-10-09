@@ -2278,13 +2278,36 @@ static void probePlayerCaptainChain(Il2CppObject *center, void *centerClass) {
     char summary[4096] = {0};
     size_t used = 0;
     int resolved = 0, withCaptain = 0, withMove = 0;
+    static int rawPassLoggedCount = 0;
+    static BOOL chainHeaderLogged = NO;
+    if (!chainHeaderLogged) {
+        chainHeaderLogged = YES;
+        char cc[64] = {0}, cn[64] = {0};
+        readObjectClassName(center, cc, sizeof(cc), cn, sizeof(cn));
+        runtimeLog([NSString stringWithFormat:
+            @"player captain header center=0x%lx class=%s ns=%s getPlayer=0x%lx getWorldPos=0x%lx",
+            (uintptr_t)center, cc[0] ? cc : "?", cn[0] ? cn : "?",
+            (uintptr_t)getPlayer, (uintptr_t)getWorldPos]);
+    }
 
     for (int i = 0; i < 10; i++) {
         int32_t index = i;
         void *params[1] = { &index };
         Il2CppException *exception = NULL;
         Il2CppObject *player = invokeMethod(getPlayer, center, params, &exception);
-        if (!player || exception || !isPlausibleObjectPointer((uintptr_t)player)) continue;
+        BOOL plausible = isPlausibleObjectPointer((uintptr_t)player);
+        if (!player || exception || !plausible) {
+            if (rawPassLoggedCount < 30) {
+                rawPassLoggedCount++;
+                char cls[48] = {0}, ns[48] = {0};
+                if (player) readObjectClassName(player, cls, sizeof(cls), ns, sizeof(ns));
+                runtimeLog([NSString stringWithFormat:
+                    @"player captain raw idx=%d ptr=0x%lx exc=0x%lx plausible=%d class=%s ns=%s",
+                    i, (uintptr_t)player, (uintptr_t)exception, plausible ? 1 : 0,
+                    cls[0] ? cls : "?", ns[0] ? ns : "?"]);
+            }
+            continue;
+        }
         resolved++;
 
         uint32_t camp = 0, playerId = 0;
@@ -2399,6 +2422,48 @@ static void probeTrackedHeroActorProxies(void) {
         Il2CppVector3 tPos = {0, 0, 0};
         BOOL tPtrOK = NO, tRead = NO, tLive = NO;
         probeTransformSource(proxy, &tPos, &tPtrOK, &tRead, &tLive);
+
+        /* Decisive logic-layer test: LuaCallCs_Battle.GetActorWorldPos(actorID).
+           Compare against the render-layer field (0x4C4) every 3s so we can see
+           whether the official logic source keeps updating while the render
+           source freezes off-screen. Only hero[0] (self) and hero[5] are logged. */
+        static const Il2CppMethodInfo *worldPosMethod = (const Il2CppMethodInfo *)-1;
+        static BOOL worldPosMethodResolved = NO;
+        static NSTimeInterval lastWorldPosProbeSelf = 0.0;
+        static NSTimeInterval lastWorldPosProbeEnemy = 0.0;
+        if (!worldPosMethodResolved) {
+            worldPosMethodResolved = YES;
+            void *coreImage = findIl2CppImageNamed("Scripts.GameCore.dll");
+            void *luaBattle = coreImage && p_il2cpp_class_from_name
+                ? p_il2cpp_class_from_name(coreImage, "", "LuaCallCs_Battle") : NULL;
+            worldPosMethod = resolveMethod(luaBattle, "GetActorWorldPos", 1);
+            runtimeLog([NSString stringWithFormat:
+                @"logic GetActorWorldPos resolve luaBattle=0x%lx method=0x%lx",
+                (uintptr_t)luaBattle, (uintptr_t)worldPosMethod]);
+        }
+        if (worldPosMethod && worldPosMethod != (const Il2CppMethodInfo *)-1 &&
+            (g_trackedHeroActorIndexes[i] == 0 || g_trackedHeroActorIndexes[i] == 5)) {
+            BOOL isSelf = (g_trackedHeroActorIndexes[i] == 0);
+            NSTimeInterval wpNow = [NSDate timeIntervalSinceReferenceDate];
+            NSTimeInterval last = isSelf ? lastWorldPosProbeSelf : lastWorldPosProbeEnemy;
+            if (last <= 0.0 || wpNow - last >= 3.0) {
+                if (isSelf) lastWorldPosProbeSelf = wpNow; else lastWorldPosProbeEnemy = wpNow;
+                uint32_t worldActorID = actorID;
+                void *wpParams[1] = { &worldActorID };
+                Il2CppException *wpExc = NULL;
+                Il2CppObject *wpBoxed = invokeMethod(worldPosMethod, NULL, wpParams, &wpExc);
+                Il2CppVector3 wp = {0, 0, 0};
+                BOOL wpOK = decodeBoxedVector3(wpBoxed, wpExc, &wp);
+                Il2CppVector3 rf = {0, 0, 0};
+                BOOL rfOK = readVector3Field(proxy, 0x4C4, &rf);
+                runtimeLog([NSString stringWithFormat:
+                    @"logic WPos idx=%d id=%u ok=%d pos=(%.2f,%.2f,%.2f) field=(%.2f,%.2f,%.2f) exc=0x%lx",
+                    g_trackedHeroActorIndexes[i], actorID, wpOK ? 1 : 0,
+                    wp.x, wp.y, wp.z, rfOK ? rf.x : 0.0f, rfOK ? rf.y : 0.0f,
+                    rfOK ? rf.z : 0.0f, (uintptr_t)wpExc]);
+            }
+        }
+
         if (logicUsed > 0 && logicUsed < sizeof(logicSamples) - 1) logicSamples[logicUsed++] = ' ';
         int logicWritten = appendLogicLayerSummary(proxy, g_trackedHeroActorIndexes[i],
                                                    actorID, logicSamples + logicUsed,
