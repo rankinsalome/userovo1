@@ -1914,6 +1914,82 @@ static BOOL isUsableActorWorld(Il2CppVector3 world) {
     return YES;
 }
 
+typedef struct {
+    BOOL initialized;
+    uintptr_t actorPtr;
+    uint32_t actorID;
+    uint32_t objID;
+    uint32_t coreSeq;
+    uintptr_t selfPtr;
+    Il2CppVector3 position;
+    Il2CppVector3 logic;
+    Il2CppVector3 transform;
+    NSTimeInterval sampleTime;
+    NSTimeInterval lastPositionChange;
+    NSTimeInterval lastLogicChange;
+    NSTimeInterval lastTransformChange;
+    uint64_t samples;
+    uint64_t positionChanges;
+    uint64_t logicChanges;
+    uint64_t transformChanges;
+} PositionAuditState;
+
+static PositionAuditState g_positionAudit[8] = {};
+
+static BOOL auditVectorChanged(Il2CppVector3 a, Il2CppVector3 b) {
+    return fabsf(a.x - b.x) > 0.0005f || fabsf(a.y - b.y) > 0.0005f ||
+        fabsf(a.z - b.z) > 0.0005f;
+}
+
+static void auditActorState(Il2CppObject *actor, uint32_t actorID, int slot,
+                            BOOL inView, BOOL logicRead, Il2CppVector3 logic,
+                            BOOL transformRead, Il2CppVector3 transform) {
+    if (!actor || slot < 0 || slot >= 8 || !actorID) return;
+    PositionAuditState *s = &g_positionAudit[slot];
+    NSTimeInterval now = [NSDate timeIntervalSinceReferenceDate];
+    Il2CppVector3 position = {0, 0, 0};
+    BOOL positionRead = readVector3Field(actor, 0x4C4, &position);
+    uint32_t objID = 0, coreSeq = 0;
+    readUInt32Field(actor, 0x4AC, &objID);
+    readUInt32Field(actor, 0x4A8, &coreSeq);
+    uintptr_t selfPtr = 0;
+    readProcessBytes((uintptr_t)actor + 0x460, &selfPtr, sizeof(selfPtr));
+    BOOL pointerChanged = s->initialized && (s->actorPtr != (uintptr_t)actor ||
+        s->objID != objID || s->coreSeq != coreSeq || s->selfPtr != selfPtr);
+    BOOL positionChanged = positionRead && (!s->initialized || auditVectorChanged(s->position, position));
+    BOOL logicChanged = logicRead && (!s->initialized || auditVectorChanged(s->logic, logic));
+    BOOL transformChanged = transformRead && (!s->initialized || auditVectorChanged(s->transform, transform));
+    if (positionChanged) s->positionChanges++;
+    if (logicChanged) s->logicChanges++;
+    if (transformChanged) s->transformChanges++;
+    if (positionChanged) s->lastPositionChange = now;
+    if (logicChanged) s->lastLogicChange = now;
+    if (transformChanged) s->lastTransformChange = now;
+    s->samples++;
+    if (s->initialized && (s->samples % 25 != 0) && !pointerChanged) {
+        s->position = position; s->logic = logic; s->transform = transform;
+        s->sampleTime = now; return;
+    }
+    NSTimeInterval posAge = s->lastPositionChange > 0 ? now - s->lastPositionChange : -1.0;
+    NSTimeInterval logicAge = s->lastLogicChange > 0 ? now - s->lastLogicChange : -1.0;
+    NSTimeInterval transformAge = s->lastTransformChange > 0 ? now - s->lastTransformChange : -1.0;
+    runtimeLog([NSString stringWithFormat:
+        @"position audit slot=%d id=%u ptr=0x%lx objID=%u coreSeq=%u selfPtr=0x%lx "
+         "inView=%d posRead=%d pos=(%.2f,%.2f,%.2f) posChg=%d posN=%llu posAge=%.3f "
+         "logicRead=%d logic=(%.2f,%.2f,%.2f) logicChg=%d logicN=%llu logicAge=%.3f "
+         "transformRead=%d transform=(%.2f,%.2f,%.2f) transformChg=%d transformN=%llu transformAge=%.3f pointerChanged=%d",
+        slot, actorID, (uintptr_t)actor, objID, coreSeq, selfPtr, inView ? 1 : 0,
+        positionRead ? 1 : 0, position.x, position.y, position.z, positionChanged ? 1 : 0,
+        (unsigned long long)s->positionChanges, posAge,
+        logicRead ? 1 : 0, logic.x, logic.y, logic.z, logicChanged ? 1 : 0,
+        (unsigned long long)s->logicChanges, logicAge,
+        transformRead ? 1 : 0, transform.x, transform.y, transform.z, transformChanged ? 1 : 0,
+        (unsigned long long)s->transformChanges, transformAge, pointerChanged ? 1 : 0]);
+    s->initialized = YES; s->actorPtr = (uintptr_t)actor; s->actorID = actorID;
+    s->objID = objID; s->coreSeq = coreSeq; s->selfPtr = selfPtr;
+    s->position = position; s->logic = logic; s->transform = transform; s->sampleTime = now;
+}
+
 static BOOL isLiveMovementVector(Il2CppVector3 world) {
     return isUsableActorWorld(world) && vectorLengthSq(world) > 0.0001f;
 }
@@ -2491,6 +2567,9 @@ static void probeTrackedHeroActorProxies(void) {
         Il2CppVector3 tPos = {0, 0, 0};
         BOOL tPtrOK = NO, tRead = NO, tLive = NO;
         probeTransformSource(proxy, &tPos, &tPtrOK, &tRead, &tLive);
+
+        auditActorState(proxy, actorID, i, proxyPosOK && tLive, logicalRead, logical,
+                        tRead, tPos);
 
         /* Decisive logic-layer test: LuaCallCs_Battle.GetActorWorldPos(actorID).
            Compare against the render-layer field (0x4C4) every 3s so we can see
