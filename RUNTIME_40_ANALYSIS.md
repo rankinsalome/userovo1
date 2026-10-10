@@ -95,3 +95,23 @@ The same pass logs whether `SGW.GetActorLogicPos`,
 `SGW.GetDebugMovementData`, and `SGW.GetDisplayPredictData` resolve in the
 current image. Resolution is only an ABI prerequisite; a non-null MethodInfo
 is not treated as proof that callback invocation is safe.
+
+## runtime-41 findings
+
+`runtime-41.log` contains three sessions: earlier data from the previous
+build, then the unified sampler beginning at `22:12:47`. The unified portion
+contains 3,000 records for 23 actor IDs:
+
+- `actor=1, logic=1` occurred in every parsed record; there were zero actor/
+  logic availability mismatches.
+- Exact-ID DisplayData was valid in 620/3,000 records.
+- The state split was `actor=1,logic=1,display=0`: 1,148; all three valid:
+  620; all three invalid: 1,232. The invalid records use the known
+  `(1000,-100,1000)` placeholder and occur during teardown/loading.
+- Samples with valid ActorLinker and logic positions had matching coordinates
+  in the observed precision. This strengthens the conclusion that the main
+  loss is projection/render filtering, not position acquisition.
+
+The first unified availability line reported `SGW=0` because the probe was
+passed `Scripts.GameCore.dll`; the existing successful SGW method probe uses
+`Scripts.Base.dll`. The source has been corrected for the next run.

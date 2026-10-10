@@ -2104,7 +2104,9 @@ static void refreshActorSnapshotPositions(void) {
     RuntimeDisplayRecord displayRecords[512] = {};
     int displayCount = 0;
     readDisplayCache(displayRecords, 512, &displayCount);
-    probeUnifiedSourceAvailability(findIl2CppImageNamed("Scripts.GameCore.dll"));
+    /* SGW is declared in Scripts.Base.dll in this build; GameCore contains
+       the ActorManager and LuaCallCs_Battle classes. */
+    probeUnifiedSourceAvailability(findIl2CppImageNamed("Scripts.Base.dll"));
 
     espBeginEntitySnapshot();
     int valid = 0;
@@ -2261,31 +2263,28 @@ static BOOL isPlausibleObjectPointer(uintptr_t p) {
     return klass > 0x1000 && klass < 0x200000000ULL;
 }
 
-/* 逻辑移动层探针：MoveControl(0x420) 是渲染层之外的逻辑位置来源，
-   SelfPtr(0x460) 是 PoolObjHandle<ActorLinker>，PositionRecords(0x478)
-   是位置记录 List。三者并列读出来，定位 iOS 上"视野无关"的移动数据挂点。 */
+/* Logic-layer probe.  The GetActorLogicPos callbacks write the raw fixed-point
+   transform at ActorLinker +0x460..0x474; it is independent of Renderer data. */
 static int appendLogicLayerSummary(Il2CppObject *actor, int index, uint32_t actorID,
                                    char *buf, size_t cap) {
     if (!actor || !buf || cap < 2) return 0;
     uintptr_t moveControl = 0;
-    uintptr_t selfObj = 0;
-    uint32_t selfSeq = 0;
     uintptr_t recItems = 0;
     int32_t recSize = 0;
+    int32_t rawPos[3] = {0, 0, 0};
+    int32_t rawForward[3] = {0, 0, 0};
     readProcessBytes((uintptr_t)actor + 0x420, &moveControl, sizeof(moveControl));
-    readProcessBytes((uintptr_t)actor + 0x460, &selfSeq, sizeof(selfSeq));
-    readProcessBytes((uintptr_t)actor + 0x468, &selfObj, sizeof(selfObj));
+    readProcessBytes((uintptr_t)actor + 0x460, rawPos, sizeof(rawPos));
+    readProcessBytes((uintptr_t)actor + 0x46C, rawForward, sizeof(rawForward));
     readProcessBytes((uintptr_t)actor + 0x478, &recItems, sizeof(recItems));
     readProcessBytes((uintptr_t)actor + 0x480, &recSize, sizeof(recSize));
+    Il2CppVector3 logicPos = { rawPos[0] * 0.001f, rawPos[1] * 0.001f, rawPos[2] * 0.001f };
+    Il2CppVector3 logicForward = { rawForward[0] * 0.001f, rawForward[1] * 0.001f, rawForward[2] * 0.001f };
 
     char moveClass[48] = {0}, moveNs[48] = {0};
     if (moveControl && isPlausibleObjectPointer(moveControl))
         readObjectClassName((Il2CppObject *)moveControl, moveClass, sizeof(moveClass),
                             moveNs, sizeof(moveNs));
-    char selfClass[48] = {0}, selfNs[48] = {0};
-    if (selfObj && isPlausibleObjectPointer(selfObj))
-        readObjectClassName((Il2CppObject *)selfObj, selfClass, sizeof(selfClass),
-                            selfNs, sizeof(selfNs));
 
     Il2CppVector3 mcCur = {0, 0, 0}, mcRemote = {0, 0, 0};
     BOOL mcCurOK = NO, mcRemoteOK = NO;
@@ -2295,12 +2294,14 @@ static int appendLogicLayerSummary(Il2CppObject *actor, int index, uint32_t acto
     }
 
     int written = snprintf(buf, cap,
-        "idx=%d id=%u move=%c(%s:0x%lx) mcCur=%c(%.1f,%.1f,%.1f) mcRemote=%c(%.1f,%.1f,%.1f) self=%c(seq=%u %s:0x%lx) rec=%c(items=0x%lx n=%d)",
+        "idx=%d id=%u logicRaw=(%d,%d,%d)/(%d,%d,%d) logicPos=(%.3f,%.3f,%.3f) logicFwd=(%.3f,%.3f,%.3f) move=%c(%s:0x%lx) mcCur=%c(%.1f,%.1f,%.1f) mcRemote=%c(%.1f,%.1f,%.1f) rec=%c(items=0x%lx n=%d)",
         index, actorID,
+        rawPos[0], rawPos[1], rawPos[2], rawForward[0], rawForward[1], rawForward[2],
+        logicPos.x, logicPos.y, logicPos.z,
+        logicForward.x, logicForward.y, logicForward.z,
         moveControl ? '1' : '0', moveClass[0] ? moveClass : "?", moveControl,
         mcCurOK ? '1' : '0', mcCur.x, mcCur.y, mcCur.z,
         mcRemoteOK ? '1' : '0', mcRemote.x, mcRemote.y, mcRemote.z,
-        selfObj ? '1' : '0', selfSeq, selfClass[0] ? selfClass : "?", selfObj,
         recItems ? '1' : '0', recItems, recSize);
     if (written <= 0) return 0;
     return (written < (int)cap) ? written : (int)cap - 1;
@@ -2385,7 +2386,6 @@ static void probePlayerCaptainChain(Il2CppObject *center, void *centerClass) {
         readProcessBytes((uintptr_t)player + 0x20, &playerId, sizeof(playerId));
 
         int32_t logicRaw[3] = {0, 0, 0};
-        readProcessBytes((uintptr_t)player + 0x460, logicRaw, sizeof(logicRaw));
 
         uintptr_t captainObj = 0;
         readProcessBytes((uintptr_t)player + 0x1C8, &captainObj, sizeof(captainObj));
@@ -2403,6 +2403,7 @@ static void probePlayerCaptainChain(Il2CppObject *center, void *centerClass) {
             readObjectClassName((Il2CppObject *)captainObj, captainClass, sizeof(captainClass),
                                 captainNs, sizeof(captainNs));
             readUInt32Field((Il2CppObject *)captainObj, 0x4AC, &captainObjID);
+            readProcessBytes(captainObj + 0x460, logicRaw, sizeof(logicRaw));
             readProcessBytes(captainObj + 0x420, &moveControl, sizeof(moveControl));
             if (moveControl && isPlausibleObjectPointer(moveControl)) withMove++;
             fieldOK = readVector3Field((Il2CppObject *)captainObj, 0x4C4, &field);
