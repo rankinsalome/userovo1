@@ -2568,9 +2568,6 @@ static void probeTrackedHeroActorProxies(void) {
         BOOL tPtrOK = NO, tRead = NO, tLive = NO;
         probeTransformSource(proxy, &tPos, &tPtrOK, &tRead, &tLive);
 
-        auditActorState(proxy, actorID, i, proxyPosOK && tLive, logicalRead, logical,
-                        tRead, tPos);
-
         /* Decisive logic-layer test: LuaCallCs_Battle.GetActorWorldPos(actorID).
            Compare against the render-layer field (0x4C4) every 3s so we can see
            whether the official logic source keeps updating while the render
@@ -2611,6 +2608,19 @@ static void probeTrackedHeroActorProxies(void) {
                     rfOK ? rf.z : 0.0f, (uintptr_t)wpExc]);
             }
         }
+
+        Il2CppVector3 auditLogic = {0, 0, 0};
+        BOOL auditLogicRead = NO;
+        if (worldPosMethod && worldPosMethod != (const Il2CppMethodInfo *)-1) {
+            uint32_t auditID = actorID;
+            void *auditParams[1] = { &auditID };
+            Il2CppException *auditExc = NULL;
+            Il2CppObject *auditBoxed = invokeMethod(worldPosMethod, NULL, auditParams, &auditExc);
+            auditLogicRead = decodeBoxedVector3(auditBoxed, auditExc, &auditLogic) &&
+                isUsableActorWorld(auditLogic);
+        }
+        auditActorState(proxy, actorID, i, proxyPosOK && tLive, auditLogicRead, auditLogic,
+                        tRead, tPos);
 
         if (logicUsed > 0 && logicUsed < sizeof(logicSamples) - 1) logicSamples[logicUsed++] = ' ';
         int logicWritten = appendLogicLayerSummary(proxy, g_trackedHeroActorIndexes[i],
