@@ -80,6 +80,9 @@ void espSetUnityViewport(float width, float height) {
 void espSetMinimapPoint(float x, float y, float z) {
     if (!isfinite(x) || !isfinite(y) || !isfinite(z)) return;
     if (g_pendingEntCnt <= 0) return;
+    /* Native MinimapSys returns Unity screen coordinates: bottom-left origin.
+       Store raw coordinates; drawRect performs the same viewport conversion
+       used by the regular WorldToScreen path. */
     g_pendingEnts[g_pendingEntCnt - 1].minimap = Vec3{x, y, z};
 }
 
@@ -392,25 +395,31 @@ static EspView *g_espView = nil;
     if (localCount > kMaxESPEntries) localCount = kMaxESPEntries;
     memcpy(local, g_ents, sizeof(EEnt) * localCount);
     os_unfair_lock_unlock(&g_entLock);
-    /* Native minimap coordinates are already in screen space. Draw a small
-       independent marker layer so the world ESP projection remains unchanged. */
-    if (g_minimapEnabled) {
-        for (int i = 0; i < localCount; i++) {
-            EEnt *e = &local[i];
-            if (!isfinite(e->minimap.x) || !isfinite(e->minimap.y)) continue;
-            CGFloat mx = e->minimap.x, my = e->minimap.y;
-            CGFloat radius = 4.0f;
-            if (mx < 0 || my < 0 || mx > sw || my > sh) continue;
-            CGContextSetFillColorWithColor(c, [UIColor colorWithRed:1 green:.18 blue:.15 alpha:.95].CGColor);
-            CGContextFillEllipseInRect(c, CGRectMake(mx - radius, my - radius, radius * 2, radius * 2));
-        }
-    }
     float unityWidth = 0.0f;
     float unityHeight = 0.0f;
     os_unfair_lock_lock(&g_viewportLock);
     unityWidth = g_unityViewportWidth;
     unityHeight = g_unityViewportHeight;
     os_unfair_lock_unlock(&g_viewportLock);
+    /* Native MinimapSys coordinates use Unity screen pixels and a bottom-left
+       origin. Convert them into the overlay's point-sized top-left space. */
+    if (g_minimapEnabled) {
+        for (int i = 0; i < localCount; i++) {
+            EEnt *e = &local[i];
+            if (!isfinite(e->minimap.x) || !isfinite(e->minimap.y)) continue;
+            CGFloat mx = e->minimap.x, my = e->minimap.y;
+            if (unityWidth > 0.0f && unityHeight > 0.0f) {
+                mx = mx * sw / unityWidth;
+                my = sh - my * sh / unityHeight;
+            } else {
+                my = sh - my;
+            }
+            CGFloat radius = 4.0f;
+            if (mx < 0 || my < 0 || mx > sw || my > sh) continue;
+            CGContextSetFillColorWithColor(c, [UIColor colorWithRed:1 green:.18 blue:.15 alpha:.95].CGColor);
+            CGContextFillEllipseInRect(c, CGRectMake(mx - radius, my - radius, radius * 2, radius * 2));
+        }
+    }
     for(int i=0;i<localCount;i++){
         EEnt*e=&local[i];if(!e->ok)continue;
         Vec3 sp=e->screenValid ? e->screen : W2S(e->pos,g_viewMat,g_projMat,sw,sh);
