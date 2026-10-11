@@ -1372,16 +1372,103 @@ static BOOL tryCaptainLogicPosition(Il2CppObject *actor, Il2CppVector3 *outPosit
     return YES;
 }
 
+typedef struct {
+    uint32_t actorID;
+    Il2CppVector3 position;
+    NSTimeInterval lastAttempt;
+    NSTimeInterval lastSuccess;
+} ActorLogicPositionCacheEntry;
+
+static ActorLogicPositionCacheEntry g_actorLogicPositionCache[512];
+static const Il2CppMethodInfo *g_getActorWorldPositionMethod = NULL;
+static BOOL g_getActorWorldPositionResolved = NO;
+static NSUInteger g_actorLogicPositionCacheCursor = 0;
+
+/* This codebase already probes LuaCallCs_Battle.GetActorWorldPos as a
+ * logic-layer source. Promote it to the live overlay path; the reference
+ * overlay similarly refreshes coordinates through its actor-logic callback. */
+static BOOL tryActorLogicWorldPosition(Il2CppObject *actor,
+                                       Il2CppVector3 *outPosition) {
+    if (!actor || !outPosition || !p_il2cpp_runtime_invoke ||
+        !p_il2cpp_object_unbox || !p_il2cpp_object_get_class ||
+        !p_il2cpp_class_get_name) return NO;
+    void *actorClass = p_il2cpp_object_get_class(actor);
+    const char *className = actorClass ? p_il2cpp_class_get_name(actorClass) : NULL;
+    if (!className || strcmp(className, "ActorLinker") != 0) return NO;
+    uint32_t actorID = 0;
+    if (!readUInt32Field(actor, 0x4AC, &actorID) || !actorID) return NO;
+
+    if (!g_getActorWorldPositionResolved) {
+        g_getActorWorldPositionResolved = YES;
+        void *coreImage = findIl2CppImageNamed("Scripts.GameCore.dll");
+        void *luaBattle = coreImage && p_il2cpp_class_from_name
+            ? p_il2cpp_class_from_name(coreImage, "", "LuaCallCs_Battle") : NULL;
+        g_getActorWorldPositionMethod = resolveMethod(luaBattle,
+                                                       "GetActorWorldPos", 1);
+        runtimeLog([NSString stringWithFormat:
+            @"draw logic position method resolved=%d method=0x%lx",
+            g_getActorWorldPositionMethod != NULL,
+            (uintptr_t)g_getActorWorldPositionMethod]);
+    }
+    if (!g_getActorWorldPositionMethod) return NO;
+
+    NSTimeInterval now = [NSDate timeIntervalSinceReferenceDate];
+    ActorLogicPositionCacheEntry *entry = NULL;
+    for (NSUInteger i = 0; i < sizeof(g_actorLogicPositionCache) /
+                                sizeof(g_actorLogicPositionCache[0]); i++) {
+        if (g_actorLogicPositionCache[i].actorID == actorID) {
+            entry = &g_actorLogicPositionCache[i];
+            break;
+        }
+    }
+    if (!entry) {
+        entry = &g_actorLogicPositionCache[g_actorLogicPositionCacheCursor++ %
+            (sizeof(g_actorLogicPositionCache) / sizeof(g_actorLogicPositionCache[0]))];
+        memset(entry, 0, sizeof(*entry));
+        entry->actorID = actorID;
+    }
+
+    const NSTimeInterval refreshInterval = 0.1;
+    const NSTimeInterval maxCacheAge = 0.25;
+    if (entry->lastAttempt > 0.0 && now - entry->lastAttempt < refreshInterval) {
+        if (entry->lastSuccess > 0.0 && now - entry->lastSuccess <= maxCacheAge) {
+            *outPosition = entry->position;
+            return YES;
+        }
+        return NO;
+    }
+    entry->lastAttempt = now;
+    void *params[1] = { &actorID };
+    Il2CppException *exception = NULL;
+    Il2CppObject *boxed = invokeMethod(g_getActorWorldPositionMethod, NULL,
+                                       params, &exception);
+    Il2CppVector3 logicPosition = {0, 0, 0};
+    if (decodeBoxedVector3(boxed, exception, &logicPosition) &&
+        isUsableActorWorld(logicPosition)) {
+        entry->position = logicPosition;
+        entry->lastSuccess = now;
+        *outPosition = logicPosition;
+        return YES;
+    }
+    if (entry->lastSuccess > 0.0 && now - entry->lastSuccess <= maxCacheAge) {
+        *outPosition = entry->position;
+        return YES;
+    }
+    return NO;
+}
+
 static BOOL readObjectPosition(Il2CppObject *object, Il2CppVector3 *outPosition) {
     if (!object || !outPosition || !p_il2cpp_object_get_class || !p_il2cpp_object_unbox) return NO;
     void *objectClass = p_il2cpp_object_get_class(object);
     enum ActorPositionSource source = kActorPositionNone;
-    /* Captain logic position first: server-authoritative, render/culling
-       independent.  Falls back to the existing chain when unavailable. */
+    /* The reference overlay re-reads MyTransform.position for every frame.
+       Do that before finite cached fields: movement and captain snapshots can
+       stop advancing when their render-side owner leaves the camera. */
+    if (tryTransformPosition(object, objectClass, outPosition)) return YES;
+    if (tryActorLogicWorldPosition(object, outPosition)) return YES;
     if (tryCaptainLogicPosition(object, outPosition)) return YES;
-    if (readActorPositionWithMovement(object, objectClass, outPosition, &source)) return YES;
     if (tryActorLogicalPosition(object, objectClass, outPosition)) return YES;
-    return tryTransformPosition(object, objectClass, outPosition);
+    return readActorPositionWithMovement(object, objectClass, outPosition, &source);
 }
 
 /* Resolve the current ActorLinker for every draw refresh.  The cached object

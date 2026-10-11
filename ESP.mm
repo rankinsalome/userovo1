@@ -265,6 +265,10 @@ void disableMapHack(void) {
 
 @interface EspView : UIView
 @property CADisplayLink *dl;
+@property NSMutableArray<CAShapeLayer *> *markerLayers;
+@property NSMutableArray<CATextLayer *> *labelLayers;
+@property NSUInteger markerCount;
+@property NSUInteger labelCount;
 @end
 static EspView *g_espView = nil;
 @implementation EspView
@@ -272,11 +276,15 @@ static EspView *g_espView = nil;
     self=[super initWithFrame:f];
     self.backgroundColor=[UIColor clearColor];
     self.opaque=NO;self.userInteractionEnabled=NO;
+    self.contentScaleFactor = UIScreen.mainScreen.scale;
+    self.markerLayers = [NSMutableArray array];
+    self.labelLayers = [NSMutableArray array];
     _dl=[CADisplayLink displayLinkWithTarget:self selector:@selector(tick)];
     [_dl addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
     return self;
 }
 - (void)tick{
+    if (!g_espEnabled) return;
     g_espTicks++;
     if ((g_espTicks % 30) == 0) {
         updateESPMatrices();
@@ -284,8 +292,41 @@ static EspView *g_espView = nil;
     }
     [self setNeedsDisplay];
 }
+- (CAShapeLayer *)markerLayerAtIndex:(NSUInteger)index {
+    while (self.markerLayers.count <= index) {
+        CAShapeLayer *layer = [CAShapeLayer layer];
+        layer.fillColor = UIColor.clearColor.CGColor;
+        layer.lineWidth = 1.5f;
+        [self.layer addSublayer:layer];
+        [self.markerLayers addObject:layer];
+    }
+    CAShapeLayer *layer = self.markerLayers[index];
+    layer.hidden = NO;
+    return layer;
+}
+- (CATextLayer *)labelLayerAtIndex:(NSUInteger)index {
+    while (self.labelLayers.count <= index) {
+        CATextLayer *layer = [CATextLayer layer];
+        layer.contentsScale = self.window.screen.scale ?: UIScreen.mainScreen.scale;
+        layer.alignmentMode = kCAAlignmentLeft;
+        layer.foregroundColor = UIColor.whiteColor.CGColor;
+        layer.font = (__bridge CFTypeRef)[UIFont systemFontOfSize:10 weight:UIFontWeightMedium];
+        layer.fontSize = 10.0f;
+        [self.layer addSublayer:layer];
+        [self.labelLayers addObject:layer];
+    }
+    CATextLayer *layer = self.labelLayers[index];
+    layer.hidden = NO;
+    return layer;
+}
+- (void)hideUnusedLayers {
+    for (NSUInteger i = self.markerCount; i < self.markerLayers.count; i++) self.markerLayers[i].hidden = YES;
+    for (NSUInteger i = self.labelCount; i < self.labelLayers.count; i++) self.labelLayers[i].hidden = YES;
+}
 - (void)drawRect:(CGRect)r{
-    if(!g_espEnabled)return;
+    self.markerCount = 0;
+    self.labelCount = 0;
+    if(!g_espEnabled) { [self hideUnusedLayers]; return; }
     CGContextRef c=UIGraphicsGetCurrentContext();
     float sw=self.bounds.size.width,sh=self.bounds.size.height;
     EspRuntimeDiagnostics diagnostics;
@@ -360,57 +401,92 @@ static EspView *g_espView = nil;
             sp.x = sw - sp.x;
             sp.y = sh - sp.y;
         }
-        BOOL offscreen = sp.x < 0.0f || sp.y < 0.0f || sp.x > sw || sp.y > sh;
+        if (!isfinite(sp.x) || !isfinite(sp.y) || !isfinite(sp.z)) continue;
+        BOOL offscreen = behind || sp.x < 0.0f || sp.y < 0.0f || sp.x > sw || sp.y > sh;
+        CGFloat anchorX = sp.x, anchorY = sp.y;
         if (offscreen) {
-            CGFloat margin = 16.0f;
+            CGFloat margin = 20.0f;
             CGFloat dx = sp.x - sw * 0.5f;
             CGFloat dy = sp.y - sh * 0.5f;
+            if (fabs(dx) + fabs(dy) < 0.01f) dy = 1.0f;
             CGFloat scaleX = fabs(dx) > 0.001f ? (sw * 0.5f - margin) / fabs(dx) : 100000.0f;
             CGFloat scaleY = fabs(dy) > 0.001f ? (sh * 0.5f - margin) / fabs(dy) : 100000.0f;
             CGFloat scale = MIN(1.0f, MIN(scaleX, scaleY));
             sp.x = sw * 0.5f + dx * scale;
             sp.y = sh * 0.5f + dy * scale;
-            CGContextSetStrokeColorWithColor(c, [UIColor colorWithRed:1.0 green:0.75 blue:0.15 alpha:0.9].CGColor);
-            CGContextSetLineWidth(c, 1.0f);
-            CGContextMoveToPoint(c, sw * 0.5f, sh * 0.5f);
-            CGContextAddLineToPoint(c, sp.x, sp.y);
-            CGContextStrokePath(c);
         }
-        float cr=10;
-        UIColor*cl=e->team!=1?UIColor.redColor:UIColor.greenColor;
-        CGContextSetStrokeColorWithColor(c,cl.CGColor);
-        CGContextSetLineWidth(c,1.5);
-        CGContextStrokeEllipseInRect(c,CGRectMake(sp.x-cr,sp.y-cr,cr*2,cr*2));
-        float bw=28,bh=4,hf=e->maxHp>0?e->hp/e->maxHp:0;
-        CGContextSetFillColorWithColor(c,[UIColor colorWithWhite:0 alpha:0.55].CGColor);
-        CGContextFillRect(c,CGRectMake(sp.x-bw/2,sp.y-cr-10,bw,bh));
-        UIColor*hc=hf>0.5?UIColor.greenColor:(hf>0.25?UIColor.yellowColor:UIColor.redColor);
-        CGContextSetFillColorWithColor(c,hc.CGColor);
-        CGContextFillRect(c,CGRectMake(sp.x-bw/2,sp.y-cr-10,bw*hf,bh));
+        CGFloat radius = 10.0f;
+        UIColor *cl = offscreen ? [UIColor colorWithRed:1.0 green:0.75 blue:0.15 alpha:0.95]
+                                : (e->team != 1 ? UIColor.redColor : UIColor.greenColor);
+        CAShapeLayer *marker = [self markerLayerAtIndex:self.markerCount++];
+        marker.strokeColor = cl.CGColor;
+        marker.contentsScale = self.window.screen.scale ?: UIScreen.mainScreen.scale;
+        UIBezierPath *markerPath = [UIBezierPath bezierPath];
+        if (offscreen) {
+            CGFloat dx = sp.x - sw * 0.5f, dy = sp.y - sh * 0.5f;
+            CGFloat angle = atan2(dy, dx);
+            CGPoint tip = CGPointMake(sp.x, sp.y);
+            CGPoint base = CGPointMake(sp.x - 14.0f * cos(angle), sp.y - 14.0f * sin(angle));
+            [markerPath moveToPoint:tip];
+            [markerPath addLineToPoint:CGPointMake(base.x + 7.0f * sin(angle), base.y - 7.0f * cos(angle))];
+            [markerPath moveToPoint:tip];
+            [markerPath addLineToPoint:CGPointMake(base.x - 7.0f * sin(angle), base.y + 7.0f * cos(angle))];
+        } else {
+            [markerPath addEllipseInRect:CGRectMake(sp.x - radius, sp.y - radius, radius * 2, radius * 2)];
+        }
+        marker.path = markerPath.CGPath;
+        marker.frame = self.bounds;
+        float barWidth = 28.0f, barHeight = 4.0f;
+        float health = e->maxHp > 0.0f ? fmaxf(0.0f, fminf(1.0f, e->hp / e->maxHp)) : 0.0f;
+        CGRect bar = CGRectMake(sp.x - barWidth * 0.5f, sp.y - radius - 10.0f, barWidth, barHeight);
+        CGContextSetFillColorWithColor(c, [UIColor colorWithWhite:0 alpha:0.55].CGColor);
+        CGContextFillRect(c, bar);
+        UIColor *healthColor = health > 0.5f ? UIColor.greenColor : (health > 0.25f ? UIColor.yellowColor : UIColor.redColor);
+        CGContextSetFillColorWithColor(c, healthColor.CGColor);
+        CGContextFillRect(c, CGRectMake(bar.origin.x, bar.origin.y, barWidth * health, barHeight));
         NSString *label = [NSString stringWithUTF8String:e->className];
         if (label.length == 0) label = @"Object";
         if (offscreen) label = [NSString stringWithFormat:@"[EDGE] %@", label];
         NSString *ns = [NSString stringWithUTF8String:e->namespaceName];
         if (ns.length > 0 && ![label hasPrefix:[ns stringByAppendingString:@"."]])
             label = [NSString stringWithFormat:@"%@.%@", ns, label];
-        NSDictionary *attrs = @{ NSFontAttributeName: [UIFont systemFontOfSize:10 weight:UIFontWeightMedium],
-                                 NSForegroundColorAttributeName: UIColor.whiteColor };
-        [label drawAtPoint:CGPointMake(sp.x + cr + 3, sp.y - 7) withAttributes:attrs];
+        CATextLayer *text = [self labelLayerAtIndex:self.labelCount++];
+        text.contentsScale = self.window.screen.scale ?: UIScreen.mainScreen.scale;
+        text.string = label;
+        text.foregroundColor = UIColor.whiteColor.CGColor;
+        CGFloat labelWidth = 180.0f;
+        text.frame = CGRectMake(MAX(2.0f, MIN(anchorX + radius + 3.0f, sw - labelWidth - 2.0f)),
+                                MAX(2.0f, MIN(anchorY - 7.0f, sh - 18.0f)), labelWidth, 16.0f);
     }
+    [self hideUnusedLayers];
 }
 @end
 
 void showESPOverlay(void){
-    if(g_espWin)return;
-    CGRect s=UIScreen.mainScreen.bounds;
-    g_espWin=[[UIWindow alloc]initWithFrame:s];
-    g_espWin.windowLevel=UIWindowLevelAlert;
-    g_espWin.backgroundColor=[UIColor clearColor]; g_espWin.opaque=NO; g_espWin.userInteractionEnabled=NO;
-    g_espWin.rootViewController=[UIViewController new]; g_espWin.rootViewController.view.backgroundColor=[UIColor clearColor];
-    EspView*ev=[[EspView alloc]initWithFrame:s]; g_espView = ev; [g_espWin.rootViewController.view addSubview:ev]; g_espWin.hidden=NO;
-    appendESPLog(@"overlay enabled");
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if(g_espWin)return;
+        UIWindowScene *scene = nil;
+        for (UIScene *candidate in UIApplication.sharedApplication.connectedScenes) {
+            if (candidate.activationState == UISceneActivationStateForegroundActive &&
+                [candidate isKindOfClass:UIWindowScene.class]) { scene = (UIWindowScene *)candidate; break; }
+        }
+        CGRect frame = scene ? scene.coordinateSpace.bounds : UIScreen.mainScreen.bounds;
+        g_espWin = scene ? [[UIWindow alloc] initWithWindowScene:scene] : [[UIWindow alloc] initWithFrame:frame];
+        g_espWin.frame = frame;
+        g_espWin.windowLevel=UIWindowLevelAlert;
+        g_espWin.backgroundColor=UIColor.clearColor; g_espWin.opaque=NO; g_espWin.userInteractionEnabled=NO;
+        UIViewController *controller = [UIViewController new];
+        controller.view.backgroundColor = UIColor.clearColor;
+        g_espWin.rootViewController = controller;
+        EspView *view = [[EspView alloc] initWithFrame:controller.view.bounds];
+        view.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+        g_espView = view;
+        [controller.view addSubview:view];
+        g_espWin.hidden=NO;
+        appendESPLog(@"overlay enabled");
+    });
 }
-void hideESPOverlay(void){if(g_espWin){g_espWin.hidden=YES;g_espWin=nil;g_espView=nil;espClearEntitySnapshot();appendESPLog(@"overlay disabled");}}
+void hideESPOverlay(void){dispatch_async(dispatch_get_main_queue(), ^{if(g_espWin){g_espView.dl.paused=YES;[g_espView.dl invalidate];g_espWin.hidden=YES;g_espWin.rootViewController=nil;g_espWin=nil;g_espView=nil;espClearEntitySnapshot();appendESPLog(@"overlay disabled");}});}
 void espSetPaused(bool paused) {
     if (g_espView) g_espView.dl.paused = paused;
 }
