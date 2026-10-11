@@ -112,6 +112,7 @@ bool g_mapHackInstalled = false;
 static bool g_cameraProbeValid = false;
 static BOOL g_partitionedFogProbeDone = NO;
 static BOOL g_partitionedFogDisableApplied = NO;
+static BOOL g_fowProxyTestApplied = NO;
 
 /* ESP externs */
 extern bool g_espEnabled;
@@ -356,6 +357,7 @@ static void writeCameraHeight(int32_t v) {
 
 /* Implemented after the IL2CPP declarations and resolvers below. */
 static void tryDisablePartitionedFog(void);
+static BOOL tryDisableFogOfWarProxy(void);
 
 /* ── Layout ── */
 
@@ -545,7 +547,7 @@ static void showHUD(void) {
         [content addSubview:btnDebug];
         y += 72.0;
 
-        UIButton *btnFog = mkBtn(@"迷雾诊断\n仅验证 PartitionedFog 渲染层",
+        UIButton *btnFog = mkBtn(@"战争迷雾诊断\n测试 FogOfWarProxy",
             [UIColor colorWithRed:0.20 green:0.58 blue:0.48 alpha:1.0],
             [UIColor whiteColor], 13);
         btnFog.frame = CGRectMake(pad, y, cw, 52);
@@ -554,9 +556,13 @@ static void showHUD(void) {
             g_fogDisabled = !g_fogDisabled;
             g_partitionedFogProbeDone = NO;
             tryDisablePartitionedFog();
+            if (g_fogDisabled) {
+                g_fowProxyTestApplied = tryDisableFogOfWarProxy();
+            }
             runtimeLog([NSString stringWithFormat:
-                @"partitioned fog diagnostic requested disabled=%d applied=%d",
-                g_fogDisabled ? 1 : 0, g_partitionedFogDisableApplied ? 1 : 0]);
+                @"fog diagnostic requested disabled=%d partitionedApplied=%d proxyApplied=%d",
+                g_fogDisabled ? 1 : 0, g_partitionedFogDisableApplied ? 1 : 0,
+                g_fowProxyTestApplied ? 1 : 0]);
         }] forControlEvents:UIControlEventTouchUpInside];
         [content addSubview:btnFog];
         y += 72.0;
@@ -835,6 +841,90 @@ static void tryDisablePartitionedFog(void) {
     runtimeLog([NSString stringWithFormat:
         @"partitioned fog class resolved image=%s namespace=%s class=0x%lx method=0x%lx; instance discovery required",
         imageName ?: "", classNs ?: "", (uintptr_t)klass, (uintptr_t)method]);
+}
+
+static BOOL invokeStaticDelegateBool(void *klass, const char *fieldName,
+                                     BOOL *outValue, BOOL *outBound) {
+    if (outValue) *outValue = NO;
+    if (outBound) *outBound = NO;
+    if (!klass || !fieldName || !p_il2cpp_class_get_field_from_name ||
+        !p_il2cpp_field_static_get_value || !p_il2cpp_object_get_class ||
+        !p_il2cpp_runtime_invoke) return NO;
+    void *field = p_il2cpp_class_get_field_from_name(klass, fieldName);
+    if (!field) return NO;
+    Il2CppObject *delegate = NULL;
+    p_il2cpp_field_static_get_value(field, &delegate);
+    if (!delegate) return NO;
+    if (outBound) *outBound = YES;
+    void *delegateClass = p_il2cpp_object_get_class(delegate);
+    const Il2CppMethodInfo *invoke = resolveMethod(delegateClass, "Invoke", 0);
+    if (!invoke) return NO;
+    Il2CppException *exception = NULL;
+    Il2CppObject *boxed = invokeMethod(invoke, delegate, NULL, &exception);
+    if (exception || !boxed || !p_il2cpp_object_unbox) return NO;
+    void *raw = p_il2cpp_object_unbox(boxed);
+    if (!raw) return NO;
+    if (outValue) *outValue = (*(uint8_t *)raw) != 0;
+    return YES;
+}
+
+static BOOL invokeStaticDelegateVoidBool(void *klass, const char *fieldName, BOOL value,
+                                         BOOL *outBound) {
+    if (outBound) *outBound = NO;
+    if (!klass || !fieldName || !p_il2cpp_class_get_field_from_name ||
+        !p_il2cpp_field_static_get_value || !p_il2cpp_object_get_class ||
+        !p_il2cpp_runtime_invoke) return NO;
+    void *field = p_il2cpp_class_get_field_from_name(klass, fieldName);
+    if (!field) return NO;
+    Il2CppObject *delegate = NULL;
+    p_il2cpp_field_static_get_value(field, &delegate);
+    if (!delegate) return NO;
+    if (outBound) *outBound = YES;
+    void *delegateClass = p_il2cpp_object_get_class(delegate);
+    const Il2CppMethodInfo *invoke = resolveMethod(delegateClass, "Invoke", 1);
+    if (!invoke) return NO;
+    void *params[1] = { &value };
+    Il2CppException *exception = NULL;
+    invokeMethod(invoke, delegate, params, &exception);
+    return exception == NULL;
+}
+
+static BOOL tryDisableFogOfWarProxy(void) {
+    if (!initIl2CppAPI() || !p_il2cpp_class_from_name ||
+        !p_il2cpp_class_get_field_from_name || !p_il2cpp_field_static_get_value ||
+        !p_il2cpp_runtime_invoke || !p_il2cpp_object_get_class ||
+        !p_il2cpp_object_unbox) {
+        runtimeLog(@"fow proxy unavailable: il2cpp API incomplete");
+        return NO;
+    }
+    const char *imageName = NULL;
+    const char *classNs = NULL;
+    void *klass = findClassByExactNameAllImages("FogOfWarProxy", &imageName, &classNs);
+    if (!klass) {
+        runtimeLog(@"fow proxy unresolved class image=%s namespace=%s",
+                   imageName ?: "", classNs ?: "");
+        return NO;
+    }
+    BOOL enable = NO, levelCfg = NO;
+    BOOL enableBound = NO, levelBound = NO;
+    BOOL enableOK = invokeStaticDelegateBool(klass, "IsEnable", &enable, &enableBound);
+    BOOL levelOK = invokeStaticDelegateBool(klass, "IsLevelRenderCfg", &levelCfg, &levelBound);
+    runtimeLog([NSString stringWithFormat:
+        @"fow proxy state image=%s namespace=%s class=0x%lx enable=%d/%d bound=%d levelCfg=%d/%d bound=%d",
+        imageName ?: "", classNs ?: "", (uintptr_t)klass,
+        enableOK ? 1 : 0, enable ? 1 : 0, enableBound ? 1 : 0,
+        levelOK ? 1 : 0, levelCfg ? 1 : 0, levelBound ? 1 : 0]);
+
+    BOOL bound = NO;
+    BOOL applied = invokeStaticDelegateVoidBool(klass,
+        "SetPlayerFowRenderEnableTestSetting", NO, &bound);
+    if (!applied) {
+        runtimeLog([NSString stringWithFormat:
+            @"fow proxy disable failed bound=%d", bound ? 1 : 0]);
+        return NO;
+    }
+    runtimeLog(@"fow proxy disable invoked=1; verify coordinates with subsequent samples");
+    return YES;
 }
 
 static void logCompactRuntimeBootstrap(void) {
