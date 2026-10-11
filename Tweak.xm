@@ -1358,6 +1358,9 @@ static BOOL tryCaptainLogicPosition(Il2CppObject *actor, Il2CppVector3 *outPosit
     if (!readProcessBytes((uintptr_t)owner + 0x460, raw, sizeof(raw))) return NO;
     Il2CppVector3 pos = { raw[0] / 1000.0f, raw[1] / 1000.0f, raw[2] / 1000.0f };
     if (!isPlausibleWorldVector(pos)) return NO;
+    /* Reject the all-zero pre-battle state: a zero logic vector is not a
+       valid world position and must fall back to the render chain. */
+    if (vectorLengthSq(pos) < 0.0001f) return NO;
 
     if (!g_captainPosSuccessLogged) {
         g_captainPosSuccessLogged = YES;
