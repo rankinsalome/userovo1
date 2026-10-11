@@ -354,32 +354,8 @@ static void writeCameraHeight(int32_t v) {
     *(int32_t *)(sf + 0x1AC) = v;
 }
 
-/* Render-only fog probe.  This deliberately touches PartitionedFog.enable
- * through its managed method and never changes ActorLinker or visibility
- * state.  It is useful for validating whether the visible map layer is
- * independent from the logic position source. */
-static void tryDisablePartitionedFog(void) {
-    if (g_partitionedFogProbeDone || !g_fogDisabled) return;
-    g_partitionedFogProbeDone = YES;
-    if (!initIl2CppAPI() || !p_il2cpp_class_from_name || !p_il2cpp_runtime_invoke) {
-        runtimeLog(@"partitioned fog probe skipped: il2cpp API unavailable");
-        return;
-    }
-    void *image = findIl2CppImageNamed("UnityEngine.CoreModule.dll");
-    if (!image) image = findIl2CppImageNamed("Scripts.GamePlay.dll");
-    void *klass = image && p_il2cpp_class_from_name
-        ? p_il2cpp_class_from_name(image, "", "PartitionedFog") : NULL;
-    const Il2CppMethodInfo *method = klass ? resolveMethod(klass, "SetFogState", 1) : NULL;
-    if (!klass || !method) {
-        runtimeLog([NSString stringWithFormat:
-            @"partitioned fog probe unresolved image=0x%lx class=0x%lx method=0x%lx",
-            (uintptr_t)image, (uintptr_t)klass, (uintptr_t)method]);
-        return;
-    }
-    runtimeLog([NSString stringWithFormat:
-        @"partitioned fog class resolved class=0x%lx method=0x%lx; instance discovery required",
-        (uintptr_t)klass, (uintptr_t)method]);
-}
+/* Implemented after the IL2CPP declarations and resolvers below. */
+static void tryDisablePartitionedFog(void);
 
 /* ── Layout ── */
 
@@ -803,6 +779,31 @@ static void *findIl2CppImageNamed(const char *wanted) {
         if (name && strcmp(name, wanted) == 0) return image;
     }
     return NULL;
+}
+
+/* Render-only fog probe. This only resolves PartitionedFog.SetFogState;
+ * it does not invoke an instance method until a real component instance is
+ * found, so it cannot be mistaken for a logic-position change. */
+static void tryDisablePartitionedFog(void) {
+    if (g_partitionedFogProbeDone || !g_fogDisabled) return;
+    g_partitionedFogProbeDone = YES;
+    if (!initIl2CppAPI() || !p_il2cpp_class_from_name || !p_il2cpp_runtime_invoke) {
+        runtimeLog(@"partitioned fog probe skipped: il2cpp API unavailable");
+        return;
+    }
+    void *image = findIl2CppImageNamed("UnityEngine.CoreModule.dll");
+    if (!image) image = findIl2CppImageNamed("Scripts.GamePlay.dll");
+    void *klass = image ? p_il2cpp_class_from_name(image, "", "PartitionedFog") : NULL;
+    const Il2CppMethodInfo *method = klass ? resolveMethod(klass, "SetFogState", 1) : NULL;
+    if (!klass || !method) {
+        runtimeLog([NSString stringWithFormat:
+            @"partitioned fog probe unresolved image=0x%lx class=0x%lx method=0x%lx",
+            (uintptr_t)image, (uintptr_t)klass, (uintptr_t)method]);
+        return;
+    }
+    runtimeLog([NSString stringWithFormat:
+        @"partitioned fog class resolved class=0x%lx method=0x%lx; instance discovery required",
+        (uintptr_t)klass, (uintptr_t)method]);
 }
 
 static void logCompactRuntimeBootstrap(void) {
