@@ -625,8 +625,11 @@ static void *g_proxyProbeActorManagerClass = NULL;
 /* Native minimap adapter.  The dump exposes CBattleSystem.TheMinimapSys and
  * MinimapSys.GetPositionInScreen(Vector3, enMiniMapType); keep this separate
  * from the camera projection used by the ESP overlay. */
+static Il2CppObject *g_nativeBattleSystem = NULL;
 static Il2CppObject *g_nativeMinimapSystem = NULL;
 static const Il2CppMethodInfo *g_nativeMinimapProjectMethod = NULL;
+static const Il2CppMethodInfo *g_nativeMinimapTypeMethod = NULL;
+static int32_t g_nativeMinimapType = 0;
 static BOOL g_nativeMinimapResolved = NO;
 
 static BOOL projectNativeMinimapPosition(Il2CppVector3 world, Il2CppVector3 *outScreen);
@@ -1006,21 +1009,42 @@ static BOOL projectNativeMinimapPositionImpl(Il2CppVector3 world, Il2CppVector3 
         g_nativeMinimapResolved = YES;
         void *core = findIl2CppImageNamed("Scripts.GameCore.dll");
         void *battle = core ? p_il2cpp_class_from_name(core, "Assets.Scripts.GameSystem", "CBattleSystem") : NULL;
-        void *field = battle ? p_il2cpp_class_get_field_from_name(battle, "_instance") : NULL;
-        if (field) p_il2cpp_field_static_get_value(field, &g_nativeMinimapSystem);
+        const Il2CppMethodInfo *getInstance = battle ? resolveMethod(battle, "GetInstance", 0) : NULL;
+        if (getInstance) {
+            Il2CppException *e = NULL;
+            g_nativeBattleSystem = invokeMethod(getInstance, NULL, NULL, &e);
+            if (e) g_nativeBattleSystem = NULL;
+        }
+        if (!g_nativeBattleSystem && battle) {
+            void *field = p_il2cpp_class_get_field_from_name(battle, "_instance");
+            if (field) p_il2cpp_field_static_get_value(field, &g_nativeBattleSystem);
+        }
+        if (g_nativeBattleSystem) {
+            void *systemClass = p_il2cpp_object_get_class(g_nativeBattleSystem);
+            const Il2CppMethodInfo *getMap = systemClass ? resolveMethod(systemClass, "get_TheMinimapSys", 0) : NULL;
+            if (getMap) {
+                Il2CppException *e = NULL;
+                g_nativeMinimapSystem = invokeMethod(getMap, g_nativeBattleSystem, NULL, &e);
+                if (e) g_nativeMinimapSystem = NULL;
+            }
+        }
         if (!g_nativeMinimapSystem && battle) {
             const Il2CppMethodInfo *getInstance = resolveMethod(battle, "GetInstance", 0);
-            if (getInstance) { Il2CppException *e = NULL; g_nativeMinimapSystem = invokeMethod(getInstance, NULL, NULL, &e); if (e) g_nativeMinimapSystem = NULL; }
+            (void)getInstance;
         }
-        void *systemClass = g_nativeMinimapSystem ? p_il2cpp_object_get_class(g_nativeMinimapSystem) : NULL;
-        const Il2CppMethodInfo *getMap = systemClass ? resolveMethod(systemClass, "get_TheMinimapSys", 0) : NULL;
-        if (getMap) { Il2CppException *e = NULL; g_nativeMinimapSystem = invokeMethod(getMap, g_nativeMinimapSystem, NULL, &e); if (e) g_nativeMinimapSystem = NULL; }
         void *mapClass = g_nativeMinimapSystem ? p_il2cpp_object_get_class(g_nativeMinimapSystem) : NULL;
         g_nativeMinimapProjectMethod = mapClass ? resolveMethod(mapClass, "GetPositionInScreen", 2) : NULL;
-        runtimeLog([NSString stringWithFormat:@"native minimap resolve battle=%d map=%d project=%d", battle != NULL, g_nativeMinimapSystem != NULL, g_nativeMinimapProjectMethod != NULL]);
+        g_nativeMinimapTypeMethod = mapClass ? resolveMethod(mapClass, "GetUsedMiniMapType", 0) : NULL;
+        if (g_nativeMinimapTypeMethod) {
+            Il2CppException *e = NULL;
+            Il2CppObject *boxedType = invokeMethod(g_nativeMinimapTypeMethod, g_nativeMinimapSystem, NULL, &e);
+            void *rawType = boxedType && !e && p_il2cpp_object_unbox ? p_il2cpp_object_unbox(boxedType) : NULL;
+            if (rawType) g_nativeMinimapType = *(int32_t *)rawType;
+        }
+        runtimeLog([NSString stringWithFormat:@"native minimap resolve battle=%d battleObj=%d map=%d typeMethod=%d project=%d type=%d", battle != NULL, g_nativeBattleSystem != NULL, g_nativeMinimapSystem != NULL, g_nativeMinimapTypeMethod != NULL, g_nativeMinimapProjectMethod != NULL, g_nativeMinimapType]);
     }
     if (!g_nativeMinimapSystem || !g_nativeMinimapProjectMethod) return NO;
-    int32_t mapType = 0; void *params[2] = { &world, &mapType }; Il2CppException *exception = NULL;
+    int32_t mapType = g_nativeMinimapType; void *params[2] = { &world, &mapType }; Il2CppException *exception = NULL;
     Il2CppObject *boxed = invokeMethod(g_nativeMinimapProjectMethod, g_nativeMinimapSystem, params, &exception);
     void *raw = boxed && !exception && p_il2cpp_object_unbox ? p_il2cpp_object_unbox(boxed) : NULL;
     if (!raw) return NO; *outScreen = *(Il2CppVector3 *)raw;
