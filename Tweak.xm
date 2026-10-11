@@ -584,6 +584,10 @@ static const Il2CppMethodInfo *resolveMethod(void *klass, const char *name, int 
 static void probeTrackedHeroActorProxies(void);
 static int readBoxedIntResult(const Il2CppMethodInfo *method, Il2CppObject *object,
                               void **params, BOOL *ok);
+/* Declared here because the live-position helpers are defined before the
+ * actor-probe state block below. */
+static Il2CppObject *g_proxyProbeActorManager = NULL;
+static void *g_proxyProbeActorManagerClass = NULL;
 
 il2cpp_domain_get_t p_il2cpp_domain_get = NULL;
 il2cpp_domain_get_assemblies_t p_il2cpp_domain_get_assemblies = NULL;
@@ -1552,8 +1556,6 @@ typedef struct {
 
 static ActorPositionRef50 g_actorPositionRefs50[512];
 static int g_actorPositionRefCount50 = 0;
-static Il2CppObject *g_proxyProbeActorManager = NULL;
-static void *g_proxyProbeActorManagerClass = NULL;
 static uintptr_t g_proxyProbeManagerIdentity = 0;
 static uint32_t g_trackedHeroActorIDs[16] = {0};
 static int g_trackedHeroActorIndexes[16] = {0};
