@@ -1461,12 +1461,12 @@ static BOOL readObjectPosition(Il2CppObject *object, Il2CppVector3 *outPosition)
     if (!object || !outPosition || !p_il2cpp_object_get_class || !p_il2cpp_object_unbox) return NO;
     void *objectClass = p_il2cpp_object_get_class(object);
     enum ActorPositionSource source = kActorPositionNone;
-    /* The reference overlay re-reads MyTransform.position for every frame.
-       Do that before finite cached fields: movement and captain snapshots can
-       stop advancing when their render-side owner leaves the camera. */
-    if (tryTransformPosition(object, objectClass, outPosition)) return YES;
+    /* Transform.position can remain numerically valid after its render-side
+       owner is culled. Prefer the game logic position first so projection gets
+       a changing world coordinate for actors outside the camera view. */
     if (tryActorLogicWorldPosition(object, outPosition)) return YES;
     if (tryCaptainLogicPosition(object, outPosition)) return YES;
+    if (tryTransformPosition(object, objectClass, outPosition)) return YES;
     if (tryActorLogicalPosition(object, objectClass, outPosition)) return YES;
     return readActorPositionWithMovement(object, objectClass, outPosition, &source);
 }
