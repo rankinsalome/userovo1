@@ -1149,6 +1149,29 @@ static BOOL readObjectPosition(Il2CppObject *object, Il2CppVector3 *outPosition)
     return tryTransformPosition(object, objectClass, outPosition);
 }
 
+/* Resolve the current ActorLinker for every draw refresh.  The cached object
+ * is only a discovery hint; pooled actors can be replaced while retaining an
+ * actorID. */
+static Il2CppObject *resolveCurrentActorLinker(uint32_t actorID,
+                                               Il2CppObject *fallback) {
+    if (!actorID || !g_proxyProbeActorManager || !g_proxyProbeActorManagerClass ||
+        !p_il2cpp_runtime_invoke) return fallback;
+    const Il2CppMethodInfo *method = resolveMethod(g_proxyProbeActorManagerClass,
+                                                   "GetActorProxy", 2);
+    if (!method) return fallback;
+    int32_t managedID = (int32_t)actorID;
+    uint8_t alwaysFind = 1;
+    void *params[2] = { &managedID, &alwaysFind };
+    Il2CppException *exception = NULL;
+    Il2CppObject *current = invokeMethod(method, g_proxyProbeActorManager,
+                                         params, &exception);
+    if (exception || !current) return fallback;
+    uint32_t resolvedID = 0;
+    if (!readUInt32Field(current, 0x4AC, &resolvedID) || resolvedID != actorID)
+        return fallback;
+    return current;
+}
+
 typedef struct {
     uint32_t actorID;
     Il2CppVector3 position;
@@ -1943,7 +1966,8 @@ static BOOL auditVectorChanged(Il2CppVector3 a, Il2CppVector3 b) {
 
 static void auditActorState(Il2CppObject *actor, uint32_t actorID, int slot,
                             BOOL inView, BOOL logicRead, Il2CppVector3 logic,
-                            BOOL transformRead, Il2CppVector3 transform) {
+                            BOOL transformRead, Il2CppVector3 transform,
+                            BOOL updateGateRead, uint8_t updateGate) {
     if (!actor || slot < 0 || slot >= 8 || !actorID) return;
     PositionAuditState *s = &g_positionAudit[slot];
     NSTimeInterval now = [NSDate timeIntervalSinceReferenceDate];
@@ -1977,14 +2001,15 @@ static void auditActorState(Il2CppObject *actor, uint32_t actorID, int slot,
         @"position audit slot=%d id=%u ptr=0x%lx objID=%u coreSeq=%u selfPtr=0x%lx "
          "inView=%d posRead=%d pos=(%.2f,%.2f,%.2f) posChg=%d posN=%llu posAge=%.3f "
          "logicRead=%d logic=(%.2f,%.2f,%.2f) logicChg=%d logicN=%llu logicAge=%.3f "
-         "transformRead=%d transform=(%.2f,%.2f,%.2f) transformChg=%d transformN=%llu transformAge=%.3f pointerChanged=%d",
+         "transformRead=%d transform=(%.2f,%.2f,%.2f) transformChg=%d transformN=%llu transformAge=%.3f gateRead=%d gate=0x%02x pointerChanged=%d",
         slot, actorID, (uintptr_t)actor, objID, coreSeq, selfPtr, inView ? 1 : 0,
         positionRead ? 1 : 0, position.x, position.y, position.z, positionChanged ? 1 : 0,
         (unsigned long long)s->positionChanges, posAge,
         logicRead ? 1 : 0, logic.x, logic.y, logic.z, logicChanged ? 1 : 0,
         (unsigned long long)s->logicChanges, logicAge,
         transformRead ? 1 : 0, transform.x, transform.y, transform.z, transformChanged ? 1 : 0,
-        (unsigned long long)s->transformChanges, transformAge, pointerChanged ? 1 : 0]);
+        (unsigned long long)s->transformChanges, transformAge,
+        updateGateRead ? 1 : 0, updateGate, pointerChanged ? 1 : 0]);
     s->initialized = YES; s->actorPtr = (uintptr_t)actor; s->actorID = actorID;
     s->objID = objID; s->coreSeq = coreSeq; s->selfPtr = selfPtr;
     s->position = position; s->logic = logic; s->transform = transform; s->sampleTime = now;
@@ -2111,14 +2136,15 @@ static int appendDisplayCacheSnapshot(const RuntimeDisplayRecord *records, int c
 static BOOL appendActorPositionSnapshot(const ActorPositionRef50 *ref,
                                         const RuntimeDisplayRecord *displayRecords,
                                         int displayCount) {
-    if (!ref || !ref->object) return NO;
+    if (!ref || !ref->object || !ref->actorID) return NO;
+    Il2CppObject *currentActor = resolveCurrentActorLinker(ref->actorID, ref->object);
     Il2CppVector3 world = {0, 0, 0};
     BOOL positionOK = NO;
     /* ActorLinker/MoveControl is the live gameplay source.  DisplayInfoData
        is a renderer/culling cache and may retain the last visible position or
        contain the 1000/-100/1000 placeholder after an actor leaves view. */
     Il2CppVector3 liveWorld = {0, 0, 0};
-    BOOL liveOK = readObjectPosition(ref->object, &liveWorld) &&
+    BOOL liveOK = readObjectPosition(currentActor, &liveWorld) &&
         isUsableActorWorld(liveWorld);
     if (liveOK) {
         world = liveWorld;
@@ -2619,8 +2645,13 @@ static void probeTrackedHeroActorProxies(void) {
             auditLogicRead = decodeBoxedVector3(auditBoxed, auditExc, &auditLogic) &&
                 isUsableActorWorld(auditLogic);
         }
-        auditActorState(proxy, actorID, i, proxyPosOK && tLive, auditLogicRead, auditLogic,
-                        tRead, tPos);
+        BOOL updateGateRead = NO;
+        uint8_t updateGate = 0;
+        updateGateRead = readProcessBytes((uintptr_t)proxy + 0x734,
+                                          &updateGate, sizeof(updateGate));
+        auditActorState(proxy, actorID, i,
+                        proxyPosOK && tLive, auditLogicRead, auditLogic,
+                        tRead, tPos, updateGateRead, updateGate);
 
         if (logicUsed > 0 && logicUsed < sizeof(logicSamples) - 1) logicSamples[logicUsed++] = ' ';
         int logicWritten = appendLogicLayerSummary(proxy, g_trackedHeroActorIndexes[i],
