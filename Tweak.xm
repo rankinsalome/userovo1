@@ -631,52 +631,8 @@ static BOOL g_nativeMinimapResolved = NO;
 
 static BOOL projectNativeMinimapPosition(Il2CppVector3 world, Il2CppVector3 *outScreen);
 
-/* Definition follows the IL2CPP declarations and helpers below. */
-static BOOL projectNativeMinimapPositionImpl(Il2CppVector3 world, Il2CppVector3 *outScreen) {
-    if (!outScreen || !initIl2CppAPI() || !p_il2cpp_class_from_name ||
-        !p_il2cpp_class_get_field_from_name || !p_il2cpp_field_static_get_value ||
-        !p_il2cpp_object_get_class || !p_il2cpp_runtime_invoke) return NO;
-    if (!g_nativeMinimapResolved) {
-        g_nativeMinimapResolved = YES;
-        void *core = findIl2CppImageNamed("Scripts.GameCore.dll");
-        void *battle = core ? p_il2cpp_class_from_name(core, "Assets.Scripts.GameSystem", "CBattleSystem") : NULL;
-        void *field = battle ? p_il2cpp_class_get_field_from_name(battle, "_instance") : NULL;
-        if (field) p_il2cpp_field_static_get_value(field, &g_nativeMinimapSystem);
-        if (!g_nativeMinimapSystem && battle) {
-            const Il2CppMethodInfo *getInstance = resolveMethod(battle, "GetInstance", 0);
-            if (getInstance) {
-                Il2CppException *e = NULL;
-                g_nativeMinimapSystem = invokeMethod(getInstance, NULL, NULL, &e);
-                if (e) g_nativeMinimapSystem = NULL;
-            }
-        }
-        void *systemClass = g_nativeMinimapSystem ? p_il2cpp_object_get_class(g_nativeMinimapSystem) : NULL;
-        const Il2CppMethodInfo *getMap = systemClass ? resolveMethod(systemClass, "get_TheMinimapSys", 0) : NULL;
-        if (getMap) {
-            Il2CppException *e = NULL;
-            g_nativeMinimapSystem = invokeMethod(getMap, g_nativeMinimapSystem, NULL, &e);
-            if (e) g_nativeMinimapSystem = NULL;
-        }
-        void *mapClass = g_nativeMinimapSystem ? p_il2cpp_object_get_class(g_nativeMinimapSystem) : NULL;
-        g_nativeMinimapProjectMethod = mapClass ? resolveMethod(mapClass, "GetPositionInScreen", 2) : NULL;
-        runtimeLog([NSString stringWithFormat:
-            @"native minimap resolve battle=%d map=%d project=%d",
-            battle != NULL, g_nativeMinimapSystem != NULL,
-            g_nativeMinimapProjectMethod != NULL]);
-    }
-    if (!g_nativeMinimapSystem || !g_nativeMinimapProjectMethod) return NO;
-    /* enMiniMapType.Small is the first enum value in the dump's API contract. */
-    int32_t mapType = 0;
-    void *params[2] = { &world, &mapType };
-    Il2CppException *exception = NULL;
-    Il2CppObject *boxed = invokeMethod(g_nativeMinimapProjectMethod,
-                                       g_nativeMinimapSystem, params, &exception);
-    void *raw = boxed && !exception && p_il2cpp_object_unbox
-        ? p_il2cpp_object_unbox(boxed) : NULL;
-    if (!raw) return NO;
-    *outScreen = *(Il2CppVector3 *)raw;
-    return isfinite(outScreen->x) && isfinite(outScreen->y) && isfinite(outScreen->z);
-}
+/* Implementation is placed after IL2CPP declarations/helpers. */
+static BOOL projectNativeMinimapPositionImpl(Il2CppVector3 world, Il2CppVector3 *outScreen);
 
 il2cpp_domain_get_t p_il2cpp_domain_get = NULL;
 il2cpp_domain_get_assemblies_t p_il2cpp_domain_get_assemblies = NULL;
@@ -1040,6 +996,35 @@ static const Il2CppMethodInfo *resolveMethod(void *klass, const char *name, int 
 
 static BOOL projectNativeMinimapPosition(Il2CppVector3 world, Il2CppVector3 *outScreen) {
     return projectNativeMinimapPositionImpl(world, outScreen);
+}
+
+static BOOL projectNativeMinimapPositionImpl(Il2CppVector3 world, Il2CppVector3 *outScreen) {
+    if (!outScreen || !initIl2CppAPI() || !p_il2cpp_class_from_name ||
+        !p_il2cpp_class_get_field_from_name || !p_il2cpp_field_static_get_value ||
+        !p_il2cpp_object_get_class || !p_il2cpp_runtime_invoke) return NO;
+    if (!g_nativeMinimapResolved) {
+        g_nativeMinimapResolved = YES;
+        void *core = findIl2CppImageNamed("Scripts.GameCore.dll");
+        void *battle = core ? p_il2cpp_class_from_name(core, "Assets.Scripts.GameSystem", "CBattleSystem") : NULL;
+        void *field = battle ? p_il2cpp_class_get_field_from_name(battle, "_instance") : NULL;
+        if (field) p_il2cpp_field_static_get_value(field, &g_nativeMinimapSystem);
+        if (!g_nativeMinimapSystem && battle) {
+            const Il2CppMethodInfo *getInstance = resolveMethod(battle, "GetInstance", 0);
+            if (getInstance) { Il2CppException *e = NULL; g_nativeMinimapSystem = invokeMethod(getInstance, NULL, NULL, &e); if (e) g_nativeMinimapSystem = NULL; }
+        }
+        void *systemClass = g_nativeMinimapSystem ? p_il2cpp_object_get_class(g_nativeMinimapSystem) : NULL;
+        const Il2CppMethodInfo *getMap = systemClass ? resolveMethod(systemClass, "get_TheMinimapSys", 0) : NULL;
+        if (getMap) { Il2CppException *e = NULL; g_nativeMinimapSystem = invokeMethod(getMap, g_nativeMinimapSystem, NULL, &e); if (e) g_nativeMinimapSystem = NULL; }
+        void *mapClass = g_nativeMinimapSystem ? p_il2cpp_object_get_class(g_nativeMinimapSystem) : NULL;
+        g_nativeMinimapProjectMethod = mapClass ? resolveMethod(mapClass, "GetPositionInScreen", 2) : NULL;
+        runtimeLog([NSString stringWithFormat:@"native minimap resolve battle=%d map=%d project=%d", battle != NULL, g_nativeMinimapSystem != NULL, g_nativeMinimapProjectMethod != NULL]);
+    }
+    if (!g_nativeMinimapSystem || !g_nativeMinimapProjectMethod) return NO;
+    int32_t mapType = 0; void *params[2] = { &world, &mapType }; Il2CppException *exception = NULL;
+    Il2CppObject *boxed = invokeMethod(g_nativeMinimapProjectMethod, g_nativeMinimapSystem, params, &exception);
+    void *raw = boxed && !exception && p_il2cpp_object_unbox ? p_il2cpp_object_unbox(boxed) : NULL;
+    if (!raw) return NO; *outScreen = *(Il2CppVector3 *)raw;
+    return isfinite(outScreen->x) && isfinite(outScreen->y) && isfinite(outScreen->z);
 }
 
 static Il2CppObject *invokeMethod(const Il2CppMethodInfo *method, Il2CppObject *object,
