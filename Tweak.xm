@@ -1486,6 +1486,7 @@ static BOOL g_captainPosResolved = NO;
 static const Il2CppMethodInfo *g_getOwnerPlayerMethod = NULL;
 static BOOL g_captainPosSuccessLogged = NO;
 static BOOL g_captainPosFailLogged = NO;
+static NSTimeInterval g_captainPosFallbackLogTime = 0.0;
 
 static BOOL tryCaptainLogicPosition(Il2CppObject *actor, Il2CppVector3 *outPosition) {
     if (!actor || !outPosition || !initIl2CppAPI()) return NO;
@@ -3007,6 +3008,11 @@ static BOOL appendActorPositionSnapshot(const ActorPositionRef50 *ref,
             positionOK = YES;
         }
     }
+    /* Prefer the reference source's owner Player.captainLogicPos whenever the
+       render-side ActorLinker is parked at the 1000/-100/1000 placeholder. */
+    Il2CppVector3 captainWorld = {0, 0, 0};
+    BOOL captainOK = tryCaptainLogicPosition(currentActor, &captainWorld) &&
+        isUsableActorWorld(captainWorld);
     /* ActorLinker/MoveControl is the live gameplay source.  DisplayInfoData
        is a renderer/culling cache and may retain the last visible position or
        contain the 1000/-100/1000 placeholder after an actor leaves view. */
@@ -3014,7 +3020,15 @@ static BOOL appendActorPositionSnapshot(const ActorPositionRef50 *ref,
     BOOL liveOK = NO;
     if (!positionOK) liveOK = readObjectPosition(currentActor, &liveWorld) &&
         isUsableActorWorld(liveWorld);
-    if (!positionOK && liveOK) {
+    if (!positionOK && captainOK) {
+        world = captainWorld;
+        positionOK = YES;
+        NSTimeInterval now = [NSDate date].timeIntervalSince1970;
+        if (now - g_captainPosFallbackLogTime >= 2.0) {
+            g_captainPosFallbackLogTime = now;
+            runtimeLog([NSString stringWithFormat:@"[POSITION][CAPTAIN] actor=%u world=(%.2f,%.2f,%.2f) fallback=1", ref->actorID, world.x, world.y, world.z]);
+        }
+    } else if (!positionOK && liveOK) {
         world = liveWorld;
         positionOK = YES;
     } else if (!positionOK && ref->actorID) {
