@@ -432,7 +432,8 @@ static EspView *g_espView = nil;
             [markerPath moveToPoint:tip];
             [markerPath addLineToPoint:CGPointMake(base.x - 7.0f * sin(angle), base.y + 7.0f * cos(angle))];
         } else {
-            [markerPath addEllipseInRect:CGRectMake(sp.x - radius, sp.y - radius, radius * 2, radius * 2)];
+            markerPath = [UIBezierPath bezierPathWithOvalInRect:
+                CGRectMake(sp.x - radius, sp.y - radius, radius * 2, radius * 2)];
         }
         marker.path = markerPath.CGPath;
         marker.frame = self.bounds;
