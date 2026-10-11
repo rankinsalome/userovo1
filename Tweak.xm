@@ -1223,8 +1223,11 @@ static BOOL isUsableActorWorld(Il2CppVector3 world);
 static Il2CppObject *invokeMethod(const Il2CppMethodInfo *method, Il2CppObject *object,
                                   void **params, Il2CppException **exception);
 static BOOL readUInt32Field(Il2CppObject *object, size_t offset, uint32_t *outValue);
+static BOOL readVector3Field(Il2CppObject *object, size_t offset, Il2CppVector3 *outValue);
+static BOOL isPlausibleWorldVector(Il2CppVector3 value);
 static BOOL tryActorLogicCallbackPosition(Il2CppObject *actor,
                                           Il2CppVector3 *outPosition);
+static BOOL readMinimapComponentPosition(Il2CppObject *actor, Il2CppVector3 *outPosition);
 
 static BOOL readProcessBytes(uintptr_t address, void *buffer, size_t size) {
     if (!address || !buffer || size == 0) return NO;
@@ -1244,6 +1247,13 @@ static BOOL readObjectPointerField(Il2CppObject *object, size_t offset,
     if (!value) return NO;
     *outObject = (Il2CppObject *)value;
     return YES;
+}
+
+static BOOL readMinimapComponentPosition(Il2CppObject *actor, Il2CppVector3 *outPosition) {
+    if (!actor || !outPosition) return NO;
+    Il2CppObject *miniMap = NULL;
+    if (!readObjectPointerField(actor, 0x3F0, &miniMap) || !miniMap) return NO;
+    return readVector3Field(miniMap, 0x58, outPosition) && isPlausibleWorldVector(*outPosition);
 }
 
 static BOOL readVector3Field(Il2CppObject *object, size_t offset,
@@ -1657,8 +1667,9 @@ static BOOL g_logicCallbackFailureLogged = NO;
 /* Disabled pending a device-side proof of the callback ABI.  runtime-50
  * stopped during the first in-match refresh before any callback binding or
  * request was logged, so do not enter this experimental bridge in gameplay. */
-static BOOL g_logicCallbackLiveEnabled = YES;
+static BOOL g_logicCallbackLiveEnabled = NO;
 static BOOL g_logicCallbackDiagnosticOnly = YES;
+static BOOL g_mainThreadReadLogged = NO;
 
 static BOOL initializeActorLogicCallback(void) {
     if (g_logicCallbackInitialized) return g_logicCallbackDelegate != NULL;
@@ -3060,6 +3071,14 @@ static BOOL appendActorPositionSnapshot(const ActorPositionRef50 *ref,
             positionOK = YES;
         }
     }
+    Il2CppVector3 minimapWorld = {0, 0, 0};
+    BOOL minimapWorldOK = readMinimapComponentPosition(sourceActor, &minimapWorld);
+    static NSTimeInterval lastMinimapComponentLog = 0.0;
+    NSTimeInterval componentNow = [NSDate timeIntervalSinceReferenceDate];
+    if (componentNow - lastMinimapComponentLog >= 2.0) {
+        lastMinimapComponentLog = componentNow;
+        runtimeLog([NSString stringWithFormat:@"[POSITION][MINIMAP_COMPONENT] actor=%u ok=%d actorWorld=(%.2f,%.2f,%.2f) mapWorld=(%.2f,%.2f,%.2f)", ref->actorID, minimapWorldOK, liveWorld.x, liveWorld.y, liveWorld.z, minimapWorld.x, minimapWorld.y, minimapWorld.z]);
+    }
     if (!positionOK || !isUsableActorWorld(world)) return NO;
     Il2CppVector3 screen = {-1, -1, -1};
     if (!projectWorldPosition(world, &screen) || !isUsableActorScreen(screen)) return NO;
@@ -4047,6 +4066,10 @@ static void runEntityPositionRefresh(void) {
         return;
     }
     @try {
+        if (!g_mainThreadReadLogged) {
+            g_mainThreadReadLogged = YES;
+            runtimeLog([NSString stringWithFormat:@"[READONLY][MAIN] isMainThread=%d queue=main refresh=1", [NSThread isMainThread]]);
+        }
         refreshActorSnapshotPositions();
     } @catch (NSException *exception) {
         runtimeLog([NSString stringWithFormat:@"position refresh exception=%@",
