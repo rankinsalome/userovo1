@@ -1534,8 +1534,17 @@ static BOOL initializeActorLogicCallback(void) {
     /* Match scene_overlay.mjs: the callback is the public static method with
      * the compiled callback signature, and the factory is the exact
      * Delegate.CreateDelegate(Type, MethodInfo) overload. */
-    const Il2CppMethodInfo *callbackMethod = callbackOwnerClass
-        ? resolveMethod(callbackOwnerClass, "GetActorLogicPos_callback", 2) : NULL;
+    /* The JS reference uses Type.GetMethod(name, BindingFlags), i.e. it does
+     * not filter by parameter count.  Native class_get_method_from_name does
+     * filter by count, so probe the bounded overload range and retain the
+     * public static candidate; the runtime log records the selected arity. */
+    const Il2CppMethodInfo *callbackMethod = NULL;
+    int callbackArgs = -1;
+    for (int args = 0; callbackOwnerClass && args <= 8; args++) {
+        const Il2CppMethodInfo *candidate = resolveMethod(
+            callbackOwnerClass, "GetActorLogicPos_callback", args);
+        if (candidate) { callbackMethod = candidate; callbackArgs = args; break; }
+    }
     void *delegateClass = NULL;
     void *systemImage = findIl2CppImageNamed("mscorlib.dll");
     if (systemImage && p_il2cpp_class_from_name)
@@ -1573,8 +1582,8 @@ static BOOL initializeActorLogicCallback(void) {
         return NO;
     }
     runtimeLog([NSString stringWithFormat:
-        @"logic callback bound delegate=0x%lx callback=0x%lx",
-        (uintptr_t)g_logicCallbackDelegate, (uintptr_t)callbackMethod]);
+        @"logic callback bound delegate=0x%lx callback=0x%lx args=%d",
+        (uintptr_t)g_logicCallbackDelegate, (uintptr_t)callbackMethod, callbackArgs]);
     g_logicCallbackInitialized = YES;
     return YES;
 }
