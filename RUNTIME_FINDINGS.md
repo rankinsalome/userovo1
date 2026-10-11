@@ -30,3 +30,4 @@ The reduced build must do only:
 5. Log one bounded result per second.
 
 It must not create a UI, draw ESP, change Fog, call logic callbacks, enumerate all actors, or write game state.
+#mao
