@@ -1657,7 +1657,8 @@ static BOOL g_logicCallbackFailureLogged = NO;
 /* Disabled pending a device-side proof of the callback ABI.  runtime-50
  * stopped during the first in-match refresh before any callback binding or
  * request was logged, so do not enter this experimental bridge in gameplay. */
-static BOOL g_logicCallbackLiveEnabled = NO;
+static BOOL g_logicCallbackLiveEnabled = YES;
+static BOOL g_logicCallbackDiagnosticOnly = YES;
 
 static BOOL initializeActorLogicCallback(void) {
     if (g_logicCallbackInitialized) return g_logicCallbackDelegate != NULL;
@@ -1900,6 +1901,11 @@ static BOOL pollActorLogicCallback(NSTimeInterval now) {
     if (!isUsableActorWorld(position)) return NO;
     entry->position = position;
     entry->lastSuccess = now;
+    runtimeLog([NSString stringWithFormat:
+        @"logic callback response actor=%u world=(%.2f,%.2f,%.2f) diagnosticOnly=%d",
+        entry->actorID, position.x, position.y, position.z, g_logicCallbackDiagnosticOnly]);
+    if (g_logicCallbackDiagnosticOnly) return NO;
+    *outPosition = position;
     return YES;
 }
 
@@ -1984,6 +1990,9 @@ static BOOL tryActorLogicCallbackPosition(Il2CppObject *actor,
                 invokeMethod(request, NULL, requestParams, &exception);
                 uint32_t key = 0;
                 if (!exception && findActorLogicCallbackKey(dictionary, &key)) {
+                    runtimeLog([NSString stringWithFormat:
+                        @"logic callback request actor=%u key=%u diagnosticOnly=%d",
+                        actorID, key, g_logicCallbackDiagnosticOnly]);
                     g_logicCallbackPendingKey = key;
                     g_logicCallbackPendingAt = now;
                     g_logicCallbackPendingEntry = entry;
