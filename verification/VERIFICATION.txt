@@ -1,4 +1,4 @@
-Changed branch/field: hero position acquisition now prioritizes the SGW.GetActorLogicPos callback and reads Player.captainLogicPos; transient callback failures retry instead of permanently blocking.
+Changed branch/field: appendActorPositionSnapshot now gates the new IL2CPP callback bridge with g_logicCallbackLiveEnabled=NO. Heroes use the pre-existing live-position/fallback path until the callback ABI is validated on-device.
 
 Artifacts:
 - MODIFIED_FILE: verification/MODIFIED_FILE
@@ -7,21 +7,21 @@ Artifacts:
 - ROLLBACK.sh: verification/ROLLBACK.sh
 
 BASELINE:
-Command: git show HEAD:Tweak.xm | Select-String -Pattern 'tryActorLogicCallbackPosition'
+Command: git show HEAD:Tweak.xm | Select-String -Pattern 'g_logicCallbackLiveEnabled'
 Input: HEAD:Tweak.xm
 Literal result: no match
 Exit status: 1
 
 MODIFIED:
-Command: Select-String -Path Tweak.xm -Pattern 'logic callback bound','GetActorLogicPos','captainLogicPos'
+Command: Select-String -Path Tweak.xm -Pattern 'g_logicCallbackLiveEnabled'
 Input: Tweak.xm
-Literal result: matching callback binding, request, and captainLogicPos lines present
+Literal result: declaration is NO and appendActorPositionSnapshot checks the gate before calling the callback bridge
 Exit status: 0
 
 ROLLBACK:
 Command: verification/ROLLBACK.sh verification/rollback-copy
 Input: verification/MODIFIED_FILE copied to verification/rollback-copy
-Literal result: target restored from git HEAD:Tweak.xm; callback marker absent
+Literal result: rollback restored the copy from HEAD:Tweak.xm; live callback path matches HEAD
 Exit status: 0
 
-Restored behavior/status: rollback-copy matches the baseline source; working-tree Tweak.xm and MODIFIED_FILE remain changed. Theos/iOS compilation was not available because make, clang, and xcrun are absent on this host.
+Restored behavior/status: rollback-copy matches HEAD, including the original callback call site. The working-tree Tweak.xm remains gated. git diff --check -- Tweak.xm passed. Runtime/device verification and Theos compilation were not performed; this host has no make, clang, or xcrun.

@@ -1495,6 +1495,9 @@ static Il2CppObject *g_logicCallbackManager = NULL;
 static BOOL g_logicCallbackInitialized = NO;
 static BOOL g_logicCallbackBlocked = NO;
 static BOOL g_logicCallbackFailureLogged = NO;
+/* Keep the callback bridge out of the live refresh path until its IL2CPP
+ * delegate ABI has been verified on-device. */
+static BOOL g_logicCallbackLiveEnabled = NO;
 
 static BOOL initializeActorLogicCallback(void) {
     if (g_logicCallbackInitialized) return g_logicCallbackDelegate != NULL;
@@ -2796,7 +2799,7 @@ static BOOL appendActorPositionSnapshot(const ActorPositionRef50 *ref,
     Il2CppObject *currentActor = resolveCurrentActorLinker(ref->actorID, ref->object);
     Il2CppVector3 world = {0, 0, 0};
     BOOL positionOK = NO;
-    if (strncmp(ref->displayName, "Hero[", 5) == 0) {
+    if (g_logicCallbackLiveEnabled && strncmp(ref->displayName, "Hero[", 5) == 0) {
         Il2CppVector3 callbackWorld = {0, 0, 0};
         if (tryActorLogicCallbackPosition(currentActor, &callbackWorld) &&
             isUsableActorWorld(callbackWorld)) {
