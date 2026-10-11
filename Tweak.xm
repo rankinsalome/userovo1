@@ -1314,10 +1314,68 @@ static BOOL readActorPositionWithMovement(Il2CppObject *object, void *objectClas
     return NO;
 }
 
+/* ── Captain logic position ────────────────────────────────────────────
+ * Ported from the Pandora overlay's core position reader.  The source
+ * project resolves live logic coordinates via
+ *   ActorHelper.GetOwnerPlayer(actor).captainLogicPos   (VInt3, x1000 fixed)
+ * which is server-authoritative and independent of render/culling.  This is
+ * the single part of that source we adopt; everything else (enumeration,
+ * projection, overlay) already exists here.  Synchronous — no delegate. ── */
+static BOOL g_captainPosResolved = NO;
+static const Il2CppMethodInfo *g_getOwnerPlayerMethod = NULL;
+static BOOL g_captainPosSuccessLogged = NO;
+static BOOL g_captainPosFailLogged = NO;
+
+static BOOL tryCaptainLogicPosition(Il2CppObject *actor, Il2CppVector3 *outPosition) {
+    if (!actor || !outPosition || !initIl2CppAPI()) return NO;
+    if (!g_captainPosResolved) {
+        g_captainPosResolved = YES;
+        void *core = findIl2CppImageNamed("Scripts.GameCore.dll");
+        void *helper = core && p_il2cpp_class_from_name
+            ? p_il2cpp_class_from_name(core, "Assets.Scripts.GameLogic", "ActorHelper")
+            : NULL;
+        if (!helper) helper = findClassByExactNameAllImages("ActorHelper", NULL, NULL);
+        g_getOwnerPlayerMethod = helper ? resolveMethod(helper, "GetOwnerPlayer", 1) : NULL;
+        if (!g_getOwnerPlayerMethod) {
+            runtimeLog(@"captain logic pos unresolved: ActorHelper.GetOwnerPlayer not found");
+        }
+    }
+    if (!g_getOwnerPlayerMethod) return NO;
+
+    Il2CppException *exception = NULL;
+    void *ownerParams[1] = { actor };
+    Il2CppObject *owner = invokeMethod(g_getOwnerPlayerMethod, NULL, ownerParams, &exception);
+    if (!owner || exception) {
+        if (!g_captainPosFailLogged) {
+            g_captainPosFailLogged = YES;
+            runtimeLog(@"captain logic pos: GetOwnerPlayer returned null/exception");
+        }
+        return NO;
+    }
+
+    /* Player.captainLogicPos = VInt3 {x,y,z} inline at +0x460 (int x1000). */
+    int32_t raw[3] = {0, 0, 0};
+    if (!readProcessBytes((uintptr_t)owner + 0x460, raw, sizeof(raw))) return NO;
+    Il2CppVector3 pos = { raw[0] / 1000.0f, raw[1] / 1000.0f, raw[2] / 1000.0f };
+    if (!isPlausibleWorldVector(pos)) return NO;
+
+    if (!g_captainPosSuccessLogged) {
+        g_captainPosSuccessLogged = YES;
+        runtimeLog([NSString stringWithFormat:
+            @"captain logic pos source=ok owner=0x%lx raw=(%d,%d,%d) world=(%.2f,%.2f,%.2f)",
+            (uintptr_t)owner, raw[0], raw[1], raw[2], pos.x, pos.y, pos.z]);
+    }
+    *outPosition = pos;
+    return YES;
+}
+
 static BOOL readObjectPosition(Il2CppObject *object, Il2CppVector3 *outPosition) {
     if (!object || !outPosition || !p_il2cpp_object_get_class || !p_il2cpp_object_unbox) return NO;
     void *objectClass = p_il2cpp_object_get_class(object);
     enum ActorPositionSource source = kActorPositionNone;
+    /* Captain logic position first: server-authoritative, render/culling
+       independent.  Falls back to the existing chain when unavailable. */
+    if (tryCaptainLogicPosition(object, outPosition)) return YES;
     if (readActorPositionWithMovement(object, objectClass, outPosition, &source)) return YES;
     if (tryActorLogicalPosition(object, objectClass, outPosition)) return YES;
     return tryTransformPosition(object, objectClass, outPosition);
