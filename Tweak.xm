@@ -781,6 +781,37 @@ static void *findIl2CppImageNamed(const char *wanted) {
     return NULL;
 }
 
+static void *findClassByExactNameAllImages(const char *wantedName,
+                                           const char **outImageName,
+                                           const char **outNamespace) {
+    if (outImageName) *outImageName = NULL;
+    if (outNamespace) *outNamespace = NULL;
+    if (!wantedName || !initIl2CppAPI() || !p_il2cpp_domain_get_assemblies ||
+        !p_il2cpp_assembly_get_image || !p_il2cpp_image_get_name ||
+        !p_il2cpp_image_get_class_count || !p_il2cpp_image_get_class ||
+        !p_il2cpp_class_get_name || !p_il2cpp_class_get_namespace) return NULL;
+    void *domain = p_il2cpp_domain_get();
+    size_t count = 0;
+    const void **assemblies = domain ? p_il2cpp_domain_get_assemblies(domain, &count) : NULL;
+    if (!assemblies || count == 0 || count > 4096) return NULL;
+    for (size_t i = 0; i < count; i++) {
+        void *image = assemblies[i] ? p_il2cpp_assembly_get_image(assemblies[i]) : NULL;
+        if (!image) continue;
+        size_t classCount = p_il2cpp_image_get_class_count(image);
+        if (classCount > 1000000) continue;
+        for (size_t ci = 0; ci < classCount; ci++) {
+            void *klass = p_il2cpp_image_get_class(image, ci);
+            const char *name = klass ? p_il2cpp_class_get_name(klass) : NULL;
+            if (name && strcmp(name, wantedName) == 0) {
+                if (outImageName) *outImageName = p_il2cpp_image_get_name(image);
+                if (outNamespace) *outNamespace = p_il2cpp_class_get_namespace(klass);
+                return klass;
+            }
+        }
+    }
+    return NULL;
+}
+
 /* Render-only fog probe. This only resolves PartitionedFog.SetFogState;
  * it does not invoke an instance method until a real component instance is
  * found, so it cannot be mistaken for a logic-position change. */
@@ -791,19 +822,19 @@ static void tryDisablePartitionedFog(void) {
         runtimeLog(@"partitioned fog probe skipped: il2cpp API unavailable");
         return;
     }
-    void *image = findIl2CppImageNamed("UnityEngine.CoreModule.dll");
-    if (!image) image = findIl2CppImageNamed("Scripts.GamePlay.dll");
-    void *klass = image ? p_il2cpp_class_from_name(image, "", "PartitionedFog") : NULL;
+    const char *imageName = NULL;
+    const char *classNs = NULL;
+    void *klass = findClassByExactNameAllImages("PartitionedFog", &imageName, &classNs);
     const Il2CppMethodInfo *method = klass ? resolveMethod(klass, "SetFogState", 1) : NULL;
     if (!klass || !method) {
         runtimeLog([NSString stringWithFormat:
-            @"partitioned fog probe unresolved image=0x%lx class=0x%lx method=0x%lx",
-            (uintptr_t)image, (uintptr_t)klass, (uintptr_t)method]);
+            @"partitioned fog probe unresolved imageName=%s namespace=%s class=0x%lx method=0x%lx",
+            imageName ?: "", classNs ?: "", (uintptr_t)klass, (uintptr_t)method]);
         return;
     }
     runtimeLog([NSString stringWithFormat:
-        @"partitioned fog class resolved class=0x%lx method=0x%lx; instance discovery required",
-        (uintptr_t)klass, (uintptr_t)method]);
+        @"partitioned fog class resolved image=%s namespace=%s class=0x%lx method=0x%lx; instance discovery required",
+        imageName ?: "", classNs ?: "", (uintptr_t)klass, (uintptr_t)method]);
 }
 
 static void logCompactRuntimeBootstrap(void) {
