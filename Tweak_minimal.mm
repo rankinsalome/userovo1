@@ -119,6 +119,10 @@ static BOOL readField(Il2CppObject *object, size_t offset, void *out, size_t siz
 
 static void runMinimalMinimapProbe(void) {
     static BOOL methodsResolved = NO;
+    static NSTimeInterval lastProbe = 0.0;
+    NSTimeInterval now = [NSDate timeIntervalSinceReferenceDate];
+    if (lastProbe > 0.0 && now - lastProbe < 1.0) return;
+    lastProbe = now;
     static void *managerClass = NULL;
     static void *battleClass = NULL;
     static const Il2CppMethodInfo *getManager = NULL;
@@ -150,7 +154,7 @@ static void runMinimalMinimapProbe(void) {
     Il2CppObject *boxedHost = invoke(getHostID, manager, NULL, &exception);
     void *rawHost = boxedHost && !exception ? p_object_unbox(boxedHost) : NULL;
     uint32_t hostID = rawHost ? *(uint32_t *)rawHost : 0;
-    if (!hostID) { logLine(@"[MINIMAL] host_id=0"); return; }
+    if (!hostID) { logLine(@"[MINIMAL] waiting_for_host host_id=0"); return; }
     Il2CppObject *host = NULL;
     for (int32_t index = 0; index < 64; index++) {
         void *params[1] = { &index };
@@ -201,5 +205,11 @@ __attribute__((constructor)) static void gamehackMinimalConstructor(void) {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 6 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
         logLine(@"[MINIMAL] started observer-only=1 writes=0 ui=0 esp=0 callback=0");
         runMinimalMinimapProbe();
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 1 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+            runMinimalMinimapProbe();
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 1 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+                runMinimalMinimapProbe();
+            });
+        });
     });
 }
