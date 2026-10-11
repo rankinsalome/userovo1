@@ -1,0 +1,27 @@
+Changed branch/field: hero position acquisition now prioritizes the SGW.GetActorLogicPos callback and reads Player.captainLogicPos; transient callback failures retry instead of permanently blocking.
+
+Artifacts:
+- MODIFIED_FILE: verification/MODIFIED_FILE
+- DIFF_FILE: verification/DIFF_FILE
+- VERIFICATION.txt: verification/VERIFICATION.txt
+- ROLLBACK.sh: verification/ROLLBACK.sh
+
+BASELINE:
+Command: git show HEAD:Tweak.xm | Select-String -Pattern 'tryActorLogicCallbackPosition'
+Input: HEAD:Tweak.xm
+Literal result: no match
+Exit status: 1
+
+MODIFIED:
+Command: Select-String -Path Tweak.xm -Pattern 'logic callback bound','GetActorLogicPos','captainLogicPos'
+Input: Tweak.xm
+Literal result: matching callback binding, request, and captainLogicPos lines present
+Exit status: 0
+
+ROLLBACK:
+Command: verification/ROLLBACK.sh verification/rollback-copy
+Input: verification/MODIFIED_FILE copied to verification/rollback-copy
+Literal result: target restored from git HEAD:Tweak.xm; callback marker absent
+Exit status: 0
+
+Restored behavior/status: rollback-copy matches the baseline source; working-tree Tweak.xm and MODIFIED_FILE remain changed. Theos/iOS compilation was not available because make, clang, and xcrun are absent on this host.

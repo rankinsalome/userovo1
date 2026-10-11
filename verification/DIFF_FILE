@@ -1,0 +1,404 @@
+diff --git a/Tweak.xm b/Tweak.xm
+index bfc0d5f..615b095 100644
+--- a/Tweak.xm
++++ b/Tweak.xm
+@@ -598,6 +598,10 @@ typedef void* (*il2cpp_class_from_name_t)(void* image, const char* ns, const cha
+ typedef void* (*il2cpp_object_get_class_t)(Il2CppObject *obj);
+ typedef void* (*il2cpp_class_get_field_from_name_t)(void* klass, const char* name);
+ typedef void (*il2cpp_field_static_get_value_t)(void* field, void* value);
++typedef const void* (*il2cpp_class_get_type_t)(void* klass);
++typedef Il2CppObject* (*il2cpp_type_get_object_t)(const void* type);
++typedef Il2CppObject* (*il2cpp_method_get_object_t)(const Il2CppMethodInfo* method, void* klass);
++typedef void* (*il2cpp_class_get_nested_types_t)(void* klass, void** iter);
+ /* Keep IL2CPP runtime types opaque.  A MethodInfo layout is version-specific;
+  * runtime_invoke must receive the pointer returned by the exported resolver. */
+ typedef Il2CppObject* (*il2cpp_runtime_invoke_t)(const Il2CppMethodInfo *method, void* obj, void** params, Il2CppException** exc);
+@@ -634,6 +638,10 @@ il2cpp_runtime_invoke_t p_il2cpp_runtime_invoke = NULL;
+ il2cpp_object_unbox_t p_il2cpp_object_unbox = NULL;
+ il2cpp_class_get_field_from_name_t p_il2cpp_class_get_field_from_name = NULL;
+ il2cpp_field_static_get_value_t p_il2cpp_field_static_get_value = NULL;
++il2cpp_class_get_type_t p_il2cpp_class_get_type = NULL;
++il2cpp_type_get_object_t p_il2cpp_type_get_object = NULL;
++il2cpp_method_get_object_t p_il2cpp_method_get_object = NULL;
++il2cpp_class_get_nested_types_t p_il2cpp_class_get_nested_types = NULL;
+ 
+ bool initIl2CppAPI(void) {
+     if (p_il2cpp_domain_get && p_il2cpp_domain_get_assemblies &&
+@@ -660,6 +668,10 @@ bool initIl2CppAPI(void) {
+     p_il2cpp_object_unbox = (il2cpp_object_unbox_t)dlsym(RTLD_DEFAULT, "il2cpp_object_unbox");
+     p_il2cpp_class_get_field_from_name = (il2cpp_class_get_field_from_name_t)dlsym(RTLD_DEFAULT, "il2cpp_class_get_field_from_name");
+     p_il2cpp_field_static_get_value = (il2cpp_field_static_get_value_t)dlsym(RTLD_DEFAULT, "il2cpp_field_static_get_value");
++    p_il2cpp_class_get_type = (il2cpp_class_get_type_t)dlsym(RTLD_DEFAULT, "il2cpp_class_get_type");
++    p_il2cpp_type_get_object = (il2cpp_type_get_object_t)dlsym(RTLD_DEFAULT, "il2cpp_type_get_object");
++    p_il2cpp_method_get_object = (il2cpp_method_get_object_t)dlsym(RTLD_DEFAULT, "il2cpp_method_get_object");
++    p_il2cpp_class_get_nested_types = (il2cpp_class_get_nested_types_t)dlsym(RTLD_DEFAULT, "il2cpp_class_get_nested_types");
+ 
+     if (!p_il2cpp_domain_get || !p_il2cpp_domain_get_assemblies ||
+         !p_il2cpp_assembly_get_image || !p_il2cpp_image_get_name ||
+@@ -1064,6 +1076,8 @@ static BOOL isUsableActorWorld(Il2CppVector3 world);
+ static Il2CppObject *invokeMethod(const Il2CppMethodInfo *method, Il2CppObject *object,
+                                   void **params, Il2CppException **exception);
+ static BOOL readUInt32Field(Il2CppObject *object, size_t offset, uint32_t *outValue);
++static BOOL tryActorLogicCallbackPosition(Il2CppObject *actor,
++                                          Il2CppVector3 *outPosition);
+ 
+ static BOOL readProcessBytes(uintptr_t address, void *buffer, size_t size) {
+     if (!address || !buffer || size == 0) return NO;
+@@ -1457,6 +1471,328 @@ static BOOL tryActorLogicWorldPosition(Il2CppObject *actor,
+     return NO;
+ }
+ 
++typedef struct {
++    uint32_t actorID;
++    Il2CppObject *actor;
++    Il2CppObject *owner;
++    Il2CppVector3 position;
++    NSTimeInterval nextRequest;
++    NSTimeInterval lastRequest;
++    NSTimeInterval lastSuccess;
++} ActorLogicCallbackEntry;
++
++static ActorLogicCallbackEntry g_logicCallbackEntries[128];
++static NSUInteger g_logicCallbackCursor = 0;
++static Il2CppObject *g_logicCallbackDelegate = NULL;
++static Il2CppObject *g_logicCallbackDictionary = NULL;
++static Il2CppObject *g_logicCallbackOwner = NULL;
++static ActorLogicCallbackEntry *g_logicCallbackPendingEntry = NULL;
++static uint32_t g_logicCallbackPendingKey = 0;
++static NSTimeInterval g_logicCallbackPendingAt = 0.0;
++static NSTimeInterval g_logicCallbackNextRequest = 0.0;
++static NSTimeInterval g_logicCallbackNextInit = 0.0;
++static Il2CppObject *g_logicCallbackManager = NULL;
++static BOOL g_logicCallbackInitialized = NO;
++static BOOL g_logicCallbackBlocked = NO;
++static BOOL g_logicCallbackFailureLogged = NO;
++
++static BOOL initializeActorLogicCallback(void) {
++    if (g_logicCallbackInitialized) return g_logicCallbackDelegate != NULL;
++    NSTimeInterval now = [NSDate timeIntervalSinceReferenceDate];
++    if (now < g_logicCallbackNextInit) return NO;
++    g_logicCallbackNextInit = now + 1.0;
++    if (!initIl2CppAPI() || !p_il2cpp_class_get_type || !p_il2cpp_type_get_object ||
++        !p_il2cpp_method_get_object || !p_il2cpp_class_get_nested_types ||
++        !p_il2cpp_runtime_invoke || !p_il2cpp_object_get_class ||
++        !p_il2cpp_class_get_field_from_name || !p_il2cpp_field_static_get_value) {
++        runtimeLog(@"logic callback binding unavailable: reflection API missing");
++        return NO;
++    }
++
++    void *baseImage = findIl2CppImageNamed("Scripts.Base.dll");
++    void *coreImage = findIl2CppImageNamed("Scripts.GameCore.dll");
++    void *sgwClass = baseImage ? p_il2cpp_class_from_name(baseImage, "", "SGW") : NULL;
++    void *delegateTypeClass = NULL;
++    if (sgwClass) {
++        void *iter = NULL;
++        for (;;) {
++            void *nested = p_il2cpp_class_get_nested_types(sgwClass, &iter);
++            if (!nested) break;
++            const char *name = p_il2cpp_class_get_name(nested);
++            if (name && strcmp(name, "ActorLogicTransInfoTypeDelegate") == 0) {
++                delegateTypeClass = nested;
++                break;
++            }
++        }
++    }
++    void *callbackOwnerClass = coreImage
++        ? p_il2cpp_class_from_name(coreImage, "Assets.Scripts", "CheckDistanceTool") : NULL;
++    const Il2CppMethodInfo *callbackMethod = NULL;
++    for (int args = 0; callbackOwnerClass && args <= 4 && !callbackMethod; args++)
++        callbackMethod = resolveMethod(callbackOwnerClass, "GetActorLogicPos_callback", args);
++    const char *delegateNamespace = NULL;
++    void *delegateClass = findClassByExactNameAllImages("Delegate", NULL, &delegateNamespace);
++    if (!delegateNamespace || strcmp(delegateNamespace, "System") != 0) delegateClass = NULL;
++    const Il2CppMethodInfo *createDelegate = delegateClass
++        ? resolveMethod(delegateClass, "CreateDelegate", 2) : NULL;
++    if (!delegateTypeClass || !callbackOwnerClass || !callbackMethod || !createDelegate) {
++        runtimeLog([NSString stringWithFormat:
++            @"logic callback binding unresolved sgw=%d delegateType=%d owner=%d method=%d factory=%d",
++            sgwClass != NULL, delegateTypeClass != NULL, callbackOwnerClass != NULL,
++            callbackMethod != NULL, createDelegate != NULL]);
++        return NO;
++    }
++
++    const void *delegateType = p_il2cpp_class_get_type(delegateTypeClass);
++    Il2CppObject *delegateTypeObject = delegateType ? p_il2cpp_type_get_object(delegateType) : NULL;
++    Il2CppObject *callbackMethodObject = p_il2cpp_method_get_object(callbackMethod, callbackOwnerClass);
++    if (!delegateTypeObject || !callbackMethodObject) {
++        runtimeLog(@"logic callback binding failed: reflection objects missing");
++        return NO;
++    }
++    void *factoryParams[2] = { &delegateTypeObject, &callbackMethodObject };
++    Il2CppException *exception = NULL;
++    g_logicCallbackDelegate = invokeMethod(createDelegate, NULL, factoryParams, &exception);
++    if (!g_logicCallbackDelegate || exception) {
++        g_logicCallbackDelegate = NULL;
++        runtimeLog([NSString stringWithFormat:
++            @"logic callback binding failed: Delegate.CreateDelegate exception=0x%lx",
++            (uintptr_t)exception]);
++        return NO;
++    }
++    runtimeLog([NSString stringWithFormat:
++        @"logic callback bound delegate=0x%lx callback=0x%lx",
++        (uintptr_t)g_logicCallbackDelegate, (uintptr_t)callbackMethod]);
++    g_logicCallbackInitialized = YES;
++    return YES;
++}
++
++static BOOL findActorLogicCallbackKey(Il2CppObject *dictionary, uint32_t *outKey) {
++    if (outKey) *outKey = 0;
++    if (!dictionary || !outKey || !p_il2cpp_object_get_class || !p_il2cpp_object_unbox) return NO;
++    void *dictClass = p_il2cpp_object_get_class(dictionary);
++    const Il2CppMethodInfo *enumeratorMethod = resolveMethod(dictClass, "GetEnumerator", 0);
++    if (!enumeratorMethod) return NO;
++    Il2CppException *exception = NULL;
++    Il2CppObject *enumerator = invokeMethod(enumeratorMethod, dictionary, NULL, &exception);
++    void *enumeratorClass = enumerator && !exception ? p_il2cpp_object_get_class(enumerator) : NULL;
++    const Il2CppMethodInfo *moveNext = resolveMethod(enumeratorClass, "MoveNext", 0);
++    const Il2CppMethodInfo *current = resolveMethod(enumeratorClass, "get_Current", 0);
++    if (!enumerator || !moveNext || !current) return NO;
++
++    BOOL found = NO;
++    uint32_t key = 0;
++    for (int i = 0; i < 1024; i++) {
++        exception = NULL;
++        Il2CppObject *advanced = invokeMethod(moveNext, enumerator, NULL, &exception);
++        void *hasNext = advanced && !exception ? p_il2cpp_object_unbox(advanced) : NULL;
++        if (!hasNext || !*(uint8_t *)hasNext) break;
++        exception = NULL;
++        Il2CppObject *pair = invokeMethod(current, enumerator, NULL, &exception);
++        void *pairClass = pair && !exception ? p_il2cpp_object_get_class(pair) : NULL;
++        const Il2CppMethodInfo *getKey = resolveMethod(pairClass, "get_Key", 0);
++        const Il2CppMethodInfo *getValue = resolveMethod(pairClass, "get_Value", 0);
++        if (!getKey || !getValue) continue;
++        exception = NULL;
++        Il2CppObject *value = invokeMethod(getValue, pair, NULL, &exception);
++        if (!value || exception || value != g_logicCallbackDelegate) continue;
++        exception = NULL;
++        Il2CppObject *boxedKey = invokeMethod(getKey, pair, NULL, &exception);
++        void *rawKey = boxedKey && !exception ? p_il2cpp_object_unbox(boxedKey) : NULL;
++        if (!rawKey || found) return NO;
++        key = *(uint32_t *)rawKey;
++        found = key != 0;
++    }
++    if (!found) return NO;
++    *outKey = key;
++    return YES;
++}
++
++static BOOL readActorLogicCallbackDictionary(Il2CppObject **outDictionary) {
++    if (outDictionary) *outDictionary = NULL;
++    if (!outDictionary || !p_il2cpp_class_get_field_from_name || !p_il2cpp_field_static_get_value)
++        return NO;
++    void *baseImage = findIl2CppImageNamed("Scripts.Base.dll");
++    void *sgwClass = baseImage ? p_il2cpp_class_from_name(baseImage, "", "SGW") : NULL;
++    void *field = sgwClass ? p_il2cpp_class_get_field_from_name(sgwClass, "delegateDict") : NULL;
++    Il2CppObject *dictionary = NULL;
++    if (field) {
++        p_il2cpp_field_static_get_value(field, &dictionary);
++    }
++    if (!dictionary) {
++        const Il2CppMethodInfo *getter = resolveMethod(sgwClass, "get_delegateDict", 0);
++        Il2CppException *exception = NULL;
++        dictionary = getter ? invokeMethod(getter, NULL, NULL, &exception) : NULL;
++        if (exception) dictionary = NULL;
++    }
++    if (!dictionary) return NO;
++    *outDictionary = dictionary;
++    return YES;
++}
++
++static BOOL pollActorLogicCallback(NSTimeInterval now) {
++    if (!g_logicCallbackPendingEntry) return NO;
++    if (now - g_logicCallbackPendingAt > 2.0) {
++        g_logicCallbackPendingEntry = NULL;
++        g_logicCallbackNextRequest = now + 0.5;
++        if (!g_logicCallbackFailureLogged) {
++            g_logicCallbackFailureLogged = YES;
++            runtimeLog(@"logic callback stopped: request timed out");
++        }
++        return NO;
++    }
++    Il2CppObject *dictionary = NULL;
++    if (!readActorLogicCallbackDictionary(&dictionary) || dictionary != g_logicCallbackDictionary) {
++        g_logicCallbackPendingEntry = NULL;
++        g_logicCallbackDictionary = dictionary;
++        g_logicCallbackNextRequest = now + 0.5;
++        if (!g_logicCallbackFailureLogged) {
++            g_logicCallbackFailureLogged = YES;
++            runtimeLog(@"logic callback stopped: callback dictionary changed");
++        }
++        return NO;
++    }
++    void *dictClass = p_il2cpp_object_get_class(dictionary);
++    const Il2CppMethodInfo *containsKey = resolveMethod(dictClass, "ContainsKey", 1);
++    if (!containsKey) return NO;
++    uint32_t key = g_logicCallbackPendingKey;
++    void *params[1] = { &key };
++    Il2CppException *exception = NULL;
++    Il2CppObject *boxedPresent = invokeMethod(containsKey, dictionary, params, &exception);
++    void *present = boxedPresent && !exception ? p_il2cpp_object_unbox(boxedPresent) : NULL;
++    if (!present) return NO;
++    if (*(uint8_t *)present) return NO;
++
++    ActorLogicCallbackEntry *entry = g_logicCallbackPendingEntry;
++    Il2CppObject *owner = NULL;
++    if (!entry || !g_getOwnerPlayerMethod) return NO;
++    void *ownerParams[1] = { entry->actor };
++    exception = NULL;
++    owner = invokeMethod(g_getOwnerPlayerMethod, NULL, ownerParams, &exception);
++    if (!owner || exception || owner != g_logicCallbackOwner || owner != entry->owner) {
++        g_logicCallbackPendingEntry = NULL;
++        g_logicCallbackNextRequest = now + 0.5;
++        if (!g_logicCallbackFailureLogged) {
++            g_logicCallbackFailureLogged = YES;
++            runtimeLog(@"logic callback stopped: actor owner changed");
++        }
++        return NO;
++    }
++    int32_t raw[3] = {0, 0, 0};
++    if (!readProcessBytes((uintptr_t)owner + 0x460, raw, sizeof(raw))) {
++        g_logicCallbackPendingEntry = NULL;
++        return NO;
++    }
++    Il2CppVector3 position = { raw[0] * 0.001f, raw[1] * 0.001f, raw[2] * 0.001f };
++    g_logicCallbackPendingEntry = NULL;
++    if (!isUsableActorWorld(position)) return NO;
++    entry->position = position;
++    entry->lastSuccess = now;
++    return YES;
++}
++
++static BOOL tryActorLogicCallbackPosition(Il2CppObject *actor,
++                                          Il2CppVector3 *outPosition) {
++    if (!actor || !outPosition || !initIl2CppAPI() || !p_il2cpp_object_get_class ||
++        !p_il2cpp_object_unbox || !p_il2cpp_class_get_field_from_name ||
++        !p_il2cpp_field_static_get_value) return NO;
++    uint32_t actorID = 0;
++    if (!readUInt32Field(actor, 0x4AC, &actorID) || !actorID) return NO;
++    NSTimeInterval now = [NSDate timeIntervalSinceReferenceDate];
++
++    if (g_proxyProbeActorManager && g_proxyProbeActorManager != g_logicCallbackManager) {
++        memset(g_logicCallbackEntries, 0, sizeof(g_logicCallbackEntries));
++        g_logicCallbackCursor = 0;
++        g_logicCallbackPendingEntry = NULL;
++        g_logicCallbackPendingKey = 0;
++        g_logicCallbackNextRequest = 0.0;
++        g_logicCallbackBlocked = NO;
++        g_logicCallbackFailureLogged = NO;
++        g_logicCallbackManager = g_proxyProbeActorManager;
++    }
++
++    ActorLogicCallbackEntry *entry = NULL;
++    for (NSUInteger i = 0; i < sizeof(g_logicCallbackEntries) / sizeof(g_logicCallbackEntries[0]); i++) {
++        if (g_logicCallbackEntries[i].actorID == actorID) {
++            entry = &g_logicCallbackEntries[i];
++            break;
++        }
++    }
++    if (!entry) {
++        entry = &g_logicCallbackEntries[g_logicCallbackCursor++ %
++            (sizeof(g_logicCallbackEntries) / sizeof(g_logicCallbackEntries[0]))];
++        memset(entry, 0, sizeof(*entry));
++        entry->actorID = actorID;
++    } else if (entry->actor != actor) {
++        memset(entry, 0, sizeof(*entry));
++        entry->actorID = actorID;
++    }
++    entry->actor = actor;
++
++    if (!g_logicCallbackBlocked && g_logicCallbackPendingEntry)
++        pollActorLogicCallback(now);
++
++    if (!g_logicCallbackBlocked && !g_logicCallbackPendingEntry &&
++        now >= g_logicCallbackNextRequest && initializeActorLogicCallback()) {
++        ActorLogicCallbackEntry *selected = NULL;
++        for (NSUInteger i = 0; i < sizeof(g_logicCallbackEntries) / sizeof(g_logicCallbackEntries[0]); i++) {
++            ActorLogicCallbackEntry *candidate = &g_logicCallbackEntries[i];
++            if (!candidate->actorID || now < candidate->nextRequest) continue;
++            if (!selected || candidate->lastRequest < selected->lastRequest) selected = candidate;
++        }
++        if (selected == entry) {
++            if (!g_getOwnerPlayerMethod) {
++                void *core = findIl2CppImageNamed("Scripts.GameCore.dll");
++                void *helper = core
++                    ? p_il2cpp_class_from_name(core, "Assets.Scripts.GameLogic", "ActorHelper") : NULL;
++                g_getOwnerPlayerMethod = helper ? resolveMethod(helper, "GetOwnerPlayer", 1) : NULL;
++            }
++            Il2CppObject *owner = NULL;
++            if (g_getOwnerPlayerMethod) {
++                void *ownerParams[1] = { actor };
++                Il2CppException *exception = NULL;
++                owner = invokeMethod(g_getOwnerPlayerMethod, NULL, ownerParams, &exception);
++                if (exception) owner = NULL;
++            }
++            Il2CppObject *dictionary = NULL;
++            void *baseImage = findIl2CppImageNamed("Scripts.Base.dll");
++            void *sgwClass = baseImage ? p_il2cpp_class_from_name(baseImage, "", "SGW") : NULL;
++            const Il2CppMethodInfo *request = resolveMethod(sgwClass, "GetActorLogicPos", 2);
++            if (owner && request && readActorLogicCallbackDictionary(&dictionary)) {
++                entry->owner = owner;
++                entry->lastRequest = now;
++                entry->nextRequest = now + 0.3;
++                g_logicCallbackNextRequest = now + 0.1;
++                g_logicCallbackOwner = owner;
++                g_logicCallbackDictionary = dictionary;
++                uint32_t requestID = actorID;
++                Il2CppObject *callback = g_logicCallbackDelegate;
++                void *requestParams[2] = { &requestID, &callback };
++                Il2CppException *exception = NULL;
++                invokeMethod(request, NULL, requestParams, &exception);
++                uint32_t key = 0;
++                if (!exception && findActorLogicCallbackKey(dictionary, &key)) {
++                    g_logicCallbackPendingKey = key;
++                    g_logicCallbackPendingAt = now;
++                    g_logicCallbackPendingEntry = entry;
++                } else if (!g_logicCallbackFailureLogged) {
++                    g_logicCallbackFailureLogged = YES;
++                    runtimeLog([NSString stringWithFormat:
++                        @"logic callback request failed exception=0x%lx keyFound=%d",
++                        (uintptr_t)exception, exception == NULL]);
++                }
++            }
++        }
++    }
++
++    if (entry->lastSuccess > 0.0 && now - entry->lastSuccess <= 1.0 &&
++        isUsableActorWorld(entry->position)) {
++        *outPosition = entry->position;
++        return YES;
++    }
++    return NO;
++}
++
+ static BOOL readObjectPosition(Il2CppObject *object, Il2CppVector3 *outPosition) {
+     if (!object || !outPosition || !p_il2cpp_object_get_class || !p_il2cpp_object_unbox) return NO;
+     void *objectClass = p_il2cpp_object_get_class(object);
+@@ -2460,16 +2796,25 @@ static BOOL appendActorPositionSnapshot(const ActorPositionRef50 *ref,
+     Il2CppObject *currentActor = resolveCurrentActorLinker(ref->actorID, ref->object);
+     Il2CppVector3 world = {0, 0, 0};
+     BOOL positionOK = NO;
++    if (strncmp(ref->displayName, "Hero[", 5) == 0) {
++        Il2CppVector3 callbackWorld = {0, 0, 0};
++        if (tryActorLogicCallbackPosition(currentActor, &callbackWorld) &&
++            isUsableActorWorld(callbackWorld)) {
++            world = callbackWorld;
++            positionOK = YES;
++        }
++    }
+     /* ActorLinker/MoveControl is the live gameplay source.  DisplayInfoData
+        is a renderer/culling cache and may retain the last visible position or
+        contain the 1000/-100/1000 placeholder after an actor leaves view. */
+     Il2CppVector3 liveWorld = {0, 0, 0};
+-    BOOL liveOK = readObjectPosition(currentActor, &liveWorld) &&
++    BOOL liveOK = NO;
++    if (!positionOK) liveOK = readObjectPosition(currentActor, &liveWorld) &&
+         isUsableActorWorld(liveWorld);
+-    if (liveOK) {
++    if (!positionOK && liveOK) {
+         world = liveWorld;
+         positionOK = YES;
+-    } else if (ref->actorID) {
++    } else if (!positionOK && ref->actorID) {
+         Il2CppVector3 cachedWorld = {0, 0, 0};
+         BOOL cacheOK = findDisplayPosition(displayRecords, displayCount,
+                                            ref->actorID, &cachedWorld) &&
