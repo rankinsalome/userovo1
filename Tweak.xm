@@ -629,8 +629,16 @@ static Il2CppObject *g_nativeBattleSystem = NULL;
 static Il2CppObject *g_nativeMinimapSystem = NULL;
 static const Il2CppMethodInfo *g_nativeMinimapProjectMethod = NULL;
 static const Il2CppMethodInfo *g_nativeMinimapTypeMethod = NULL;
+static const Il2CppMethodInfo *g_nativeMinimapInstanceMethod = NULL;
+static const Il2CppMethodInfo *g_nativeMinimapVisibleMethod = NULL;
+static const Il2CppMethodInfo *g_nativeMinimapValidMethod = NULL;
 static int32_t g_nativeMinimapType = 0;
+static Il2CppObject *g_nativeMinimapInstance = NULL;
+static BOOL g_nativeMinimapVisible = NO;
+static BOOL g_nativeMinimapContextReady = NO;
 static BOOL g_nativeMinimapResolved = NO;
+static NSTimeInterval g_nativeMinimapLastSampleLog = 0.0;
+static BOOL g_nativeMinimapSampleLogged = NO;
 
 static BOOL projectNativeMinimapPosition(Il2CppVector3 world, Il2CppVector3 *outScreen);
 
@@ -1035,19 +1043,53 @@ static BOOL projectNativeMinimapPositionImpl(Il2CppVector3 world, Il2CppVector3 
         void *mapClass = g_nativeMinimapSystem ? p_il2cpp_object_get_class(g_nativeMinimapSystem) : NULL;
         g_nativeMinimapProjectMethod = mapClass ? resolveMethod(mapClass, "GetPositionInScreen", 2) : NULL;
         g_nativeMinimapTypeMethod = mapClass ? resolveMethod(mapClass, "GetUsedMiniMapType", 0) : NULL;
+        g_nativeMinimapInstanceMethod = mapClass ? resolveMethod(mapClass, "GetMiniMapInstance", 1) : NULL;
+        g_nativeMinimapVisibleMethod = mapClass ? resolveMethod(mapClass, "get_MiniMapVisible", 0) : NULL;
+        g_nativeMinimapValidMethod = mapClass ? resolveMethod(mapClass, "CheckMiniMapScreenPosValid", 1) : NULL;
         if (g_nativeMinimapTypeMethod) {
             Il2CppException *e = NULL;
             Il2CppObject *boxedType = invokeMethod(g_nativeMinimapTypeMethod, g_nativeMinimapSystem, NULL, &e);
             void *rawType = boxedType && !e && p_il2cpp_object_unbox ? p_il2cpp_object_unbox(boxedType) : NULL;
             if (rawType) g_nativeMinimapType = *(int32_t *)rawType;
         }
-        runtimeLog([NSString stringWithFormat:@"native minimap resolve battle=%d battleObj=%d map=%d typeMethod=%d project=%d type=%d", battle != NULL, g_nativeBattleSystem != NULL, g_nativeMinimapSystem != NULL, g_nativeMinimapTypeMethod != NULL, g_nativeMinimapProjectMethod != NULL, g_nativeMinimapType]);
+        if (g_nativeMinimapInstanceMethod) {
+            int32_t type = 0; void *params[1] = { &type }; Il2CppException *e = NULL;
+            g_nativeMinimapInstance = invokeMethod(g_nativeMinimapInstanceMethod, g_nativeMinimapSystem, params, &e);
+            if (e) g_nativeMinimapInstance = NULL;
+        }
+        if (g_nativeMinimapVisibleMethod) {
+            Il2CppException *e = NULL; Il2CppObject *boxedVisible = invokeMethod(g_nativeMinimapVisibleMethod, g_nativeMinimapSystem, NULL, &e);
+            void *rawVisible = boxedVisible && !e && p_il2cpp_object_unbox ? p_il2cpp_object_unbox(boxedVisible) : NULL;
+            if (rawVisible) g_nativeMinimapVisible = *(BOOL *)rawVisible;
+        }
+        g_nativeMinimapContextReady = g_nativeMinimapSystem && g_nativeMinimapInstance && g_nativeMinimapVisible;
+        runtimeLog([NSString stringWithFormat:@"[MINIMAP][RESOLVE] battleClass=%d battle=%d map=%d type=%d instanceMethod=%d instance=%d visibleMethod=%d visible=%d validMethod=%d projectMethod=%d", battle != NULL, g_nativeBattleSystem != NULL, g_nativeMinimapSystem != NULL, g_nativeMinimapType, g_nativeMinimapInstanceMethod != NULL, g_nativeMinimapInstance != NULL, g_nativeMinimapVisibleMethod != NULL, g_nativeMinimapVisible, g_nativeMinimapValidMethod != NULL, g_nativeMinimapProjectMethod != NULL]);
     }
-    if (!g_nativeMinimapSystem || !g_nativeMinimapProjectMethod) return NO;
+    if (!g_nativeMinimapContextReady || !g_nativeMinimapProjectMethod) return NO;
     int32_t mapType = g_nativeMinimapType; void *params[2] = { &world, &mapType }; Il2CppException *exception = NULL;
     Il2CppObject *boxed = invokeMethod(g_nativeMinimapProjectMethod, g_nativeMinimapSystem, params, &exception);
     void *raw = boxed && !exception && p_il2cpp_object_unbox ? p_il2cpp_object_unbox(boxed) : NULL;
-    if (!raw) return NO; *outScreen = *(Il2CppVector3 *)raw;
+    if (!raw) {
+        if (!g_nativeMinimapSampleLogged) {
+            g_nativeMinimapSampleLogged = YES;
+            runtimeLog([NSString stringWithFormat:@"[MINIMAP][SAMPLE] result=invalid exception=%d", exception != NULL]);
+        }
+        return NO;
+    }
+    *outScreen = *(Il2CppVector3 *)raw;
+    BOOL inside = NO;
+    if (g_nativeMinimapValidMethod) {
+        struct { float x, y; } point = { outScreen->x, outScreen->y };
+        void *validParams[1] = { &point }; Il2CppException *validException = NULL;
+        Il2CppObject *boxedValid = invokeMethod(g_nativeMinimapValidMethod, g_nativeMinimapSystem, validParams, &validException);
+        void *rawValid = boxedValid && !validException && p_il2cpp_object_unbox ? p_il2cpp_object_unbox(boxedValid) : NULL;
+        if (rawValid) inside = *(BOOL *)rawValid;
+    }
+    NSTimeInterval now = [NSDate date].timeIntervalSince1970;
+    if (g_nativeMinimapLastSampleLog <= 0.0 || now - g_nativeMinimapLastSampleLog >= 2.0) {
+        g_nativeMinimapLastSampleLog = now;
+        runtimeLog([NSString stringWithFormat:@"[MINIMAP][SAMPLE] world=(%.2f,%.2f,%.2f) screen=(%.2f,%.2f,%.2f) inside=%d finite=%d", world.x, world.y, world.z, outScreen->x, outScreen->y, outScreen->z, inside, isfinite(outScreen->x) && isfinite(outScreen->y) && isfinite(outScreen->z)]);
+    }
     return isfinite(outScreen->x) && isfinite(outScreen->y) && isfinite(outScreen->z);
 }
 
