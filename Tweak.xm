@@ -1904,9 +1904,7 @@ static BOOL pollActorLogicCallback(NSTimeInterval now) {
     runtimeLog([NSString stringWithFormat:
         @"logic callback response actor=%u world=(%.2f,%.2f,%.2f) diagnosticOnly=%d",
         entry->actorID, position.x, position.y, position.z, g_logicCallbackDiagnosticOnly]);
-    if (g_logicCallbackDiagnosticOnly) return NO;
-    *outPosition = position;
-    return YES;
+    return g_logicCallbackDiagnosticOnly ? NO : YES;
 }
 
 static BOOL tryActorLogicCallbackPosition(Il2CppObject *actor,
