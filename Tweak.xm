@@ -1668,7 +1668,10 @@ static BOOL g_logicCallbackFailureLogged = NO;
 /* Disabled pending a device-side proof of the callback ABI.  runtime-50
  * stopped during the first in-match refresh before any callback binding or
  * request was logged, so do not enter this experimental bridge in gameplay. */
-static BOOL g_logicCallbackLiveEnabled = NO;
+/* The callback is read-only: enabling it only requests the game's existing
+ * logic position and records the response.  It is not connected to ESP or
+ * any state-changing path while observer-only mode remains active. */
+static BOOL g_logicCallbackLiveEnabled = YES;
 static BOOL g_logicCallbackDiagnosticOnly = YES;
 static BOOL g_mainThreadReadLogged = NO;
 
@@ -4257,6 +4260,34 @@ static void enumerateIl2CppAssemblies(void) {
     }
 }
 
+/* Non-invasive Puerts discovery probe.  The dump confirms these managed
+ * types/methods exist, but it does not expose a safe native JsEnv instance
+ * address.  Therefore this probe only resolves metadata and records the
+ * result; it deliberately does not invoke Eval or construct a JsEnv. */
+static void probePuertsMetadata(void) {
+    if (!initIl2CppAPI() || !p_il2cpp_class_from_name || !p_il2cpp_class_get_method_from_name) {
+        runtimeLog(@"[PUERTS_TEST] api_unavailable");
+        return;
+    }
+    void *image = findIl2CppImageNamed("com.tencent.puerts.core.dll");
+    if (!image) {
+        runtimeLog(@"[PUERTS_TEST] image_missing name=com.tencent.puerts.core.dll");
+        return;
+    }
+    void *jsEnv = p_il2cpp_class_from_name(image, "Puerts", "JsEnv");
+    void *dll = p_il2cpp_class_from_name(image, "Puerts", "PuertsDLL");
+    const Il2CppMethodInfo *eval = jsEnv
+        ? p_il2cpp_class_get_method_from_name(jsEnv, "Eval", 2) : NULL;
+    const Il2CppMethodInfo *create = dll
+        ? p_il2cpp_class_get_method_from_name(dll, "CreateJSEngine", 1) : NULL;
+    const Il2CppMethodInfo *evalNative = dll
+        ? p_il2cpp_class_get_method_from_name(dll, "Eval", 3) : NULL;
+    runtimeLog([NSString stringWithFormat:
+        @"[PUERTS_TEST] metadata image=0x%lx jsenv=0x%lx puertsdll=0x%lx eval=0x%lx create=0x%lx nativeEval=0x%lx invoked=0",
+        (uintptr_t)image, (uintptr_t)jsEnv, (uintptr_t)dll,
+        (uintptr_t)eval, (uintptr_t)create, (uintptr_t)evalNative]);
+}
+
 static const Il2CppMethodInfo* resolveIl2CppMethod(const char* ns, const char* klassName, const char* methodName, int args) {
     if (!initIl2CppAPI()) return NULL;
 
@@ -4317,6 +4348,7 @@ static void installRuntimeLifecycleObservers(void) {
         installRuntimeLifecycleObservers();
         logCompactRuntimeBootstrap();
         probeMainCameraGetter();
+        probePuertsMetadata();
         if (kRuntimeObserverOnly) {
             runtimeLog(@"[OBS][MODE] observer-only=1 writes=0 esp=0 fog=0 callback=0");
             scheduleEntityManagerSampling();
