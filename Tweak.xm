@@ -629,7 +629,10 @@ static Il2CppObject *g_nativeMinimapSystem = NULL;
 static const Il2CppMethodInfo *g_nativeMinimapProjectMethod = NULL;
 static BOOL g_nativeMinimapResolved = NO;
 
-static BOOL projectNativeMinimapPosition(Il2CppVector3 world, Il2CppVector3 *outScreen) {
+static BOOL projectNativeMinimapPosition(Il2CppVector3 world, Il2CppVector3 *outScreen);
+
+/* Definition follows the IL2CPP declarations and helpers below. */
+static BOOL projectNativeMinimapPositionImpl(Il2CppVector3 world, Il2CppVector3 *outScreen) {
     if (!outScreen || !initIl2CppAPI() || !p_il2cpp_class_from_name ||
         !p_il2cpp_class_get_field_from_name || !p_il2cpp_field_static_get_value ||
         !p_il2cpp_object_get_class || !p_il2cpp_runtime_invoke) return NO;
@@ -663,7 +666,8 @@ static BOOL projectNativeMinimapPosition(Il2CppVector3 world, Il2CppVector3 *out
     }
     if (!g_nativeMinimapSystem || !g_nativeMinimapProjectMethod) return NO;
     /* enMiniMapType.Small is the first enum value in the dump's API contract. */
-    void *params[2] = { &world, &(int32_t){0} };
+    int32_t mapType = 0;
+    void *params[2] = { &world, &mapType };
     Il2CppException *exception = NULL;
     Il2CppObject *boxed = invokeMethod(g_nativeMinimapProjectMethod,
                                        g_nativeMinimapSystem, params, &exception);
@@ -1032,6 +1036,10 @@ static void logCompactRuntimeBootstrap(void) {
 static const Il2CppMethodInfo *resolveMethod(void *klass, const char *name, int args) {
     return (klass && name && p_il2cpp_class_get_method_from_name)
         ? p_il2cpp_class_get_method_from_name(klass, name, args) : NULL;
+}
+
+static BOOL projectNativeMinimapPosition(Il2CppVector3 world, Il2CppVector3 *outScreen) {
+    return projectNativeMinimapPositionImpl(world, outScreen);
 }
 
 static Il2CppObject *invokeMethod(const Il2CppMethodInfo *method, Il2CppObject *object,
