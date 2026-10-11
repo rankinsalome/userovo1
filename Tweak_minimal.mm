@@ -32,10 +32,39 @@ static object_unbox_t p_object_unbox;
 static object_get_class_t p_object_get_class;
 static os_log_t g_log;
 
+static NSString *minimalLogPath(void) {
+    NSArray *paths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
+    NSString *documents = paths.firstObject.length ? paths.firstObject : NSTemporaryDirectory();
+    NSString *directory = [documents stringByAppendingPathComponent:@"gamehack_logs"];
+    [[NSFileManager defaultManager] createDirectoryAtPath:directory
+                               withIntermediateDirectories:YES
+                                                attributes:nil
+                                                     error:NULL];
+    return [directory stringByAppendingPathComponent:@"runtime.log"];
+}
+
 static void logLine(NSString *message) {
     if (!g_log) g_log = os_log_create("gamehack", "minimal");
-    os_log(g_log, "%{public}@", message ?: @"");
-    NSLog(@"%@", message ?: @"");
+    NSString *text = message ?: @"";
+    os_log(g_log, "%{public}@", text);
+    NSLog(@"%@", text);
+    NSString *line = [NSString stringWithFormat:@"%@ %@\n", [NSDate date], text];
+    NSString *path = minimalLogPath();
+    NSData *data = [line dataUsingEncoding:NSUTF8StringEncoding];
+    NSFileManager *fm = [NSFileManager defaultManager];
+    if (![fm fileExistsAtPath:path]) {
+        [fm createFileAtPath:path contents:data attributes:nil];
+        return;
+    }
+    NSFileHandle *handle = [NSFileHandle fileHandleForWritingAtPath:path];
+    if (!handle) return;
+    @try {
+        [handle seekToEndOfFile];
+        [handle writeData:data];
+        [handle closeFile];
+    } @catch (__unused NSException *exception) {
+        [handle closeFile];
+    }
 }
 
 static BOOL loadAPI(void) {
@@ -165,6 +194,7 @@ static void runMinimalMinimapProbe(void) {
 }
 
 __attribute__((constructor)) static void gamehackMinimalConstructor(void) {
+    logLine(@"[MINIMAL] session begin observer-only=1 writes=0 ui=0 esp=0 callback=0");
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 6 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
         logLine(@"[MINIMAL] started observer-only=1 writes=0 ui=0 esp=0 callback=0");
         runMinimalMinimapProbe();
