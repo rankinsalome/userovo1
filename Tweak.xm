@@ -639,6 +639,10 @@ static BOOL g_nativeMinimapContextReady = NO;
 static BOOL g_nativeMinimapResolved = NO;
 static NSTimeInterval g_nativeMinimapLastSampleLog = 0.0;
 static BOOL g_nativeMinimapSampleLogged = NO;
+static NSTimeInterval g_nativeMinimapLastStateLog = 0.0;
+static BOOL g_nativeMinimapLastVisible = NO;
+static int32_t g_nativeMinimapLastType = -1;
+static BOOL g_nativeMinimapStateInitialized = NO;
 
 static BOOL projectNativeMinimapPosition(Il2CppVector3 world, Il2CppVector3 *outScreen);
 
@@ -1065,8 +1069,40 @@ static BOOL projectNativeMinimapPositionImpl(Il2CppVector3 world, Il2CppVector3 
         g_nativeMinimapContextReady = g_nativeMinimapSystem && g_nativeMinimapInstance && g_nativeMinimapVisible;
         runtimeLog([NSString stringWithFormat:@"[MINIMAP][RESOLVE] battleClass=%d battle=%d map=%d type=%d instanceMethod=%d instance=%d visibleMethod=%d visible=%d validMethod=%d projectMethod=%d", battle != NULL, g_nativeBattleSystem != NULL, g_nativeMinimapSystem != NULL, g_nativeMinimapType, g_nativeMinimapInstanceMethod != NULL, g_nativeMinimapInstance != NULL, g_nativeMinimapVisibleMethod != NULL, g_nativeMinimapVisible, g_nativeMinimapValidMethod != NULL, g_nativeMinimapProjectMethod != NULL]);
     }
-    if (!g_nativeMinimapContextReady || !g_nativeMinimapProjectMethod) return NO;
-    int32_t mapType = g_nativeMinimapType; void *params[2] = { &world, &mapType }; Il2CppException *exception = NULL;
+    if (!g_nativeMinimapSystem || !g_nativeMinimapProjectMethod) return NO;
+    /* Revalidate the native context like the reference source does per snapshot. */
+    BOOL visible = g_nativeMinimapVisible;
+    if (g_nativeMinimapVisibleMethod) {
+        Il2CppException *visibleException = NULL;
+        Il2CppObject *boxedVisible = invokeMethod(g_nativeMinimapVisibleMethod, g_nativeMinimapSystem, NULL, &visibleException);
+        void *rawVisible = boxedVisible && !visibleException && p_il2cpp_object_unbox ? p_il2cpp_object_unbox(boxedVisible) : NULL;
+        if (rawVisible) visible = *(BOOL *)rawVisible;
+    }
+    int32_t mapType = g_nativeMinimapType;
+    if (g_nativeMinimapTypeMethod) {
+        Il2CppException *typeException = NULL;
+        Il2CppObject *boxedType = invokeMethod(g_nativeMinimapTypeMethod, g_nativeMinimapSystem, NULL, &typeException);
+        void *rawType = boxedType && !typeException && p_il2cpp_object_unbox ? p_il2cpp_object_unbox(boxedType) : NULL;
+        if (rawType) mapType = *(int32_t *)rawType;
+    }
+    if (g_nativeMinimapInstanceMethod) {
+        void *instanceParams[1] = { &mapType }; Il2CppException *instanceException = NULL;
+        Il2CppObject *instance = invokeMethod(g_nativeMinimapInstanceMethod, g_nativeMinimapSystem, instanceParams, &instanceException);
+        g_nativeMinimapInstance = (instanceException || !instance) ? NULL : instance;
+    }
+    g_nativeMinimapVisible = visible;
+    g_nativeMinimapType = mapType;
+    g_nativeMinimapContextReady = visible && mapType == 0 && g_nativeMinimapInstance != NULL;
+    NSTimeInterval stateNow = [NSDate date].timeIntervalSince1970;
+    if (!g_nativeMinimapStateInitialized || g_nativeMinimapLastVisible != visible || g_nativeMinimapLastType != mapType || stateNow - g_nativeMinimapLastStateLog >= 2.0) {
+        g_nativeMinimapStateInitialized = YES;
+        g_nativeMinimapLastVisible = visible;
+        g_nativeMinimapLastType = mapType;
+        g_nativeMinimapLastStateLog = stateNow;
+        runtimeLog([NSString stringWithFormat:@"[MINIMAP][STATE] visible=%d mapType=%d instance=%d ready=%d", visible, mapType, g_nativeMinimapInstance != NULL, g_nativeMinimapContextReady]);
+    }
+    if (!g_nativeMinimapContextReady) return NO;
+    void *params[2] = { &world, &mapType }; Il2CppException *exception = NULL;
     Il2CppObject *boxed = invokeMethod(g_nativeMinimapProjectMethod, g_nativeMinimapSystem, params, &exception);
     void *raw = boxed && !exception && p_il2cpp_object_unbox ? p_il2cpp_object_unbox(boxed) : NULL;
     if (!raw) {
