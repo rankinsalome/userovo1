@@ -1,4 +1,4 @@
-Changed branch/field: appendActorPositionSnapshot now gates the new IL2CPP callback bridge with g_logicCallbackLiveEnabled=NO. Heroes use the pre-existing live-position/fallback path until the callback ABI is validated on-device.
+Changed branch/field: appendActorPositionSnapshot now enables the reference-source IL2CPP callback bridge; binding selects exact callback/factory methods, and completion reads captainLogicPos through its getter plus VInt3.op_Explicit.
 
 Artifacts:
 - MODIFIED_FILE: verification/MODIFIED_FILE
@@ -9,13 +9,13 @@ Artifacts:
 BASELINE:
 Command: git show HEAD:Tweak.xm | Select-String -Pattern 'g_logicCallbackLiveEnabled'
 Input: HEAD:Tweak.xm
-Literal result: no match
-Exit status: 1
+Literal result: declaration exists with value NO; callback bridge was disabled
+Exit status: 0
 
 MODIFIED:
-Command: Select-String -Path Tweak.xm -Pattern 'g_logicCallbackLiveEnabled'
+Command: Select-String -Path Tweak.xm -Pattern 'g_logicCallbackLiveEnabled|captainLogicPos getter|VInt3.op_Explicit'
 Input: Tweak.xm
-Literal result: declaration is NO and appendActorPositionSnapshot checks the gate before calling the callback bridge
+Literal result: declaration is YES; exact callback binding and managed coordinate conversion are present
 Exit status: 0
 
 ROLLBACK:
@@ -24,4 +24,4 @@ Input: verification/MODIFIED_FILE copied to verification/rollback-copy
 Literal result: rollback restored the copy from HEAD:Tweak.xm; live callback path matches HEAD
 Exit status: 0
 
-Restored behavior/status: rollback-copy matches HEAD, including the original callback call site. The working-tree Tweak.xm remains gated. git diff --check -- Tweak.xm passed. Runtime/device verification and Theos compilation were not performed; this host has no make, clang, or xcrun.
+Restored behavior/status: rollback-copy matches HEAD. The working-tree Tweak.xm remains modified with the callback enabled. git diff --check -- Tweak.xm passed. Runtime/device verification and Theos compilation were not performed; this host has no make, clang, or xcrun.

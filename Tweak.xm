@@ -1495,9 +1495,10 @@ static Il2CppObject *g_logicCallbackManager = NULL;
 static BOOL g_logicCallbackInitialized = NO;
 static BOOL g_logicCallbackBlocked = NO;
 static BOOL g_logicCallbackFailureLogged = NO;
-/* Keep the callback bridge out of the live refresh path until its IL2CPP
- * delegate ABI has been verified on-device. */
-static BOOL g_logicCallbackLiveEnabled = NO;
+/* The reference overlay uses this compiled callback path as its primary
+ * off-screen position source.  Keep it enabled so the injected overlay
+ * follows the same verified request/response flow. */
+static BOOL g_logicCallbackLiveEnabled = YES;
 
 static BOOL initializeActorLogicCallback(void) {
     if (g_logicCallbackInitialized) return g_logicCallbackDelegate != NULL;
@@ -1530,12 +1531,20 @@ static BOOL initializeActorLogicCallback(void) {
     }
     void *callbackOwnerClass = coreImage
         ? p_il2cpp_class_from_name(coreImage, "Assets.Scripts", "CheckDistanceTool") : NULL;
-    const Il2CppMethodInfo *callbackMethod = NULL;
-    for (int args = 0; callbackOwnerClass && args <= 4 && !callbackMethod; args++)
-        callbackMethod = resolveMethod(callbackOwnerClass, "GetActorLogicPos_callback", args);
-    const char *delegateNamespace = NULL;
-    void *delegateClass = findClassByExactNameAllImages("Delegate", NULL, &delegateNamespace);
-    if (!delegateNamespace || strcmp(delegateNamespace, "System") != 0) delegateClass = NULL;
+    /* Match scene_overlay.mjs: the callback is the public static method with
+     * the compiled callback signature, and the factory is the exact
+     * Delegate.CreateDelegate(Type, MethodInfo) overload. */
+    const Il2CppMethodInfo *callbackMethod = callbackOwnerClass
+        ? resolveMethod(callbackOwnerClass, "GetActorLogicPos_callback", 2) : NULL;
+    void *delegateClass = NULL;
+    void *systemImage = findIl2CppImageNamed("mscorlib.dll");
+    if (systemImage && p_il2cpp_class_from_name)
+        delegateClass = p_il2cpp_class_from_name(systemImage, "System", "Delegate");
+    if (!delegateClass) {
+        const char *delegateNamespace = NULL;
+        delegateClass = findClassByExactNameAllImages("Delegate", NULL, &delegateNamespace);
+        if (!delegateNamespace || strcmp(delegateNamespace, "System") != 0) delegateClass = NULL;
+    }
     const Il2CppMethodInfo *createDelegate = delegateClass
         ? resolveMethod(delegateClass, "CreateDelegate", 2) : NULL;
     if (!delegateTypeClass || !callbackOwnerClass || !callbackMethod || !createDelegate) {
@@ -1681,12 +1690,44 @@ static BOOL pollActorLogicCallback(NSTimeInterval now) {
         }
         return NO;
     }
-    int32_t raw[3] = {0, 0, 0};
-    if (!readProcessBytes((uintptr_t)owner + 0x460, raw, sizeof(raw))) {
+    /* Read the managed VInt3 property and invoke the same explicit
+     * VInt3 -> Vector3 conversion used by the reference implementation. */
+    void *ownerClass = p_il2cpp_object_get_class(owner);
+    const Il2CppMethodInfo *logicGetter = resolveMethod(ownerClass, "get_captainLogicPos", 0);
+    if (!logicGetter) {
+        g_logicCallbackPendingEntry = NULL;
+        runtimeLogOnce(&g_logicCallbackFailureLogged,
+                       @"logic callback stopped: captainLogicPos getter unavailable");
+        return NO;
+    }
+    Il2CppException *logicException = NULL;
+    Il2CppObject *raw = invokeMethod(logicGetter, owner, NULL, &logicException);
+    if (!raw || logicException) {
         g_logicCallbackPendingEntry = NULL;
         return NO;
     }
-    Il2CppVector3 position = { raw[0] * 0.001f, raw[1] * 0.001f, raw[2] * 0.001f };
+    void *baseImage = findIl2CppImageNamed("Scripts.Base.dll");
+    void *vint3Class = baseImage && p_il2cpp_class_from_name
+        ? p_il2cpp_class_from_name(baseImage, "", "VInt3") : NULL;
+    const Il2CppMethodInfo *explicitOp = vint3Class
+        ? resolveMethod(vint3Class, "op_Explicit", 1) : NULL;
+    if (!explicitOp) {
+        g_logicCallbackPendingEntry = NULL;
+        runtimeLogOnce(&g_logicCallbackFailureLogged,
+                       @"logic callback stopped: VInt3.op_Explicit unavailable");
+        return NO;
+    }
+    void *conversionParams[1] = { raw };
+    Il2CppException *conversionException = NULL;
+    Il2CppObject *convertedBox = invokeMethod(explicitOp, NULL, conversionParams,
+                                              &conversionException);
+    void *convertedRaw = convertedBox && !conversionException
+        ? p_il2cpp_object_unbox(convertedBox) : NULL;
+    if (!convertedRaw) {
+        g_logicCallbackPendingEntry = NULL;
+        return NO;
+    }
+    Il2CppVector3 position = *(Il2CppVector3 *)convertedRaw;
     g_logicCallbackPendingEntry = NULL;
     if (!isUsableActorWorld(position)) return NO;
     entry->position = position;
