@@ -164,7 +164,7 @@ static void runMinimalMinimapProbe(void) {
     logLine([NSString stringWithFormat:@"[MINIMAL] host=%u world=%d(%.2f,%.2f,%.2f) map=%d type=%d instance=%d screen=%d(%.2f,%.2f,%.2f)", hostID, worldOK, world.x, world.y, world.z, mapSystem != NULL, mapType, mapInstance != NULL, screenOK, screen.x, screen.y, screen.z]);
 }
 
-%ctor {
+__attribute__((constructor)) static void gamehackMinimalConstructor(void) {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 6 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
         logLine(@"[MINIMAL] started observer-only=1 writes=0 ui=0 esp=0 callback=0");
         runMinimalMinimapProbe();
