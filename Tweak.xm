@@ -608,6 +608,8 @@ typedef struct { float x, y, z; } Il2CppVector3;
 static void probeCandidateMethods(void *klass, const char *imageName, const char *classNs, const char *className);
 static BOOL isReadableExecutablePointer(void *ptr);
 static const Il2CppMethodInfo *resolveMethod(void *klass, const char *name, int args);
+static Il2CppObject *invokeMethod(const Il2CppMethodInfo *method, Il2CppObject *object,
+                                  void **params, Il2CppException **exception);
 static void probeTrackedHeroActorProxies(void);
 static int readBoxedIntResult(const Il2CppMethodInfo *method, Il2CppObject *object,
                               void **params, BOOL *ok);
@@ -901,8 +903,9 @@ static BOOL tryDisableFogOfWarProxy(void) {
     const char *classNs = NULL;
     void *klass = findClassByExactNameAllImages("FogOfWarProxy", &imageName, &classNs);
     if (!klass) {
-        runtimeLog(@"fow proxy unresolved class image=%s namespace=%s",
-                   imageName ?: "", classNs ?: "");
+        runtimeLog([NSString stringWithFormat:
+            @"fow proxy unresolved class image=%s namespace=%s",
+            imageName ?: "", classNs ?: ""]);
         return NO;
     }
     BOOL enable = NO, levelCfg = NO;
