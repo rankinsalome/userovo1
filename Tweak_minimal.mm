@@ -34,7 +34,10 @@ static os_log_t g_log;
 
 static NSString *minimalLogPath(void) {
     NSArray *paths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
-    NSString *documents = paths.firstObject.length ? paths.firstObject : NSTemporaryDirectory();
+    id firstPath = [paths firstObject];
+    NSString *documents = ([firstPath isKindOfClass:[NSString class]] &&
+                           [(NSString *)firstPath length] > 0)
+        ? (NSString *)firstPath : NSTemporaryDirectory();
     NSString *directory = [documents stringByAppendingPathComponent:@"gamehack_logs"];
     [[NSFileManager defaultManager] createDirectoryAtPath:directory
                                withIntermediateDirectories:YES
