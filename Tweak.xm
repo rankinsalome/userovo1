@@ -1487,9 +1487,17 @@ static const Il2CppMethodInfo *g_getOwnerPlayerMethod = NULL;
 static BOOL g_captainPosSuccessLogged = NO;
 static BOOL g_captainPosFailLogged = NO;
 static NSTimeInterval g_captainPosFallbackLogTime = 0.0;
+static BOOL g_captainPosActorLogged = NO;
 
 static BOOL tryCaptainLogicPosition(Il2CppObject *actor, Il2CppVector3 *outPosition) {
     if (!actor || !outPosition || !initIl2CppAPI()) return NO;
+    if (!g_captainPosActorLogged && p_il2cpp_object_get_class && p_il2cpp_class_get_name && p_il2cpp_class_get_namespace) {
+        void *actorClass = p_il2cpp_object_get_class(actor);
+        const char *name = actorClass ? p_il2cpp_class_get_name(actorClass) : NULL;
+        const char *ns = actorClass ? p_il2cpp_class_get_namespace(actorClass) : NULL;
+        g_captainPosActorLogged = YES;
+        runtimeLog([NSString stringWithFormat:@"[POSITION][CAPTAIN][ACTOR] ptr=0x%lx class=%s ns=%s", (uintptr_t)actor, name ?: "?", ns ?: "?"]);
+    }
     if (!g_captainPosResolved) {
         g_captainPosResolved = YES;
         void *core = findIl2CppImageNamed("Scripts.GameCore.dll");
@@ -2997,7 +3005,11 @@ static BOOL appendActorPositionSnapshot(const ActorPositionRef50 *ref,
                                         const RuntimeDisplayRecord *displayRecords,
                                         int displayCount) {
     if (!ref || !ref->object || !ref->actorID) return NO;
-    Il2CppObject *currentActor = resolveCurrentActorLinker(ref->actorID, ref->object);
+    /* Reference source passes the original ActorManager.GetHeroActorByIndex
+       IActorLinker directly to ActorHelper.GetOwnerPlayer. Keep that object
+       for the logic-position path; proxy lookup is only a render fallback. */
+    Il2CppObject *sourceActor = ref->object;
+    Il2CppObject *currentActor = resolveCurrentActorLinker(ref->actorID, sourceActor);
     Il2CppVector3 world = {0, 0, 0};
     BOOL positionOK = NO;
     if (g_logicCallbackLiveEnabled && strncmp(ref->displayName, "Hero[", 5) == 0) {
@@ -3011,7 +3023,7 @@ static BOOL appendActorPositionSnapshot(const ActorPositionRef50 *ref,
     /* Prefer the reference source's owner Player.captainLogicPos whenever the
        render-side ActorLinker is parked at the 1000/-100/1000 placeholder. */
     Il2CppVector3 captainWorld = {0, 0, 0};
-    BOOL captainOK = tryCaptainLogicPosition(currentActor, &captainWorld) &&
+    BOOL captainOK = tryCaptainLogicPosition(sourceActor, &captainWorld) &&
         isUsableActorWorld(captainWorld);
     /* ActorLinker/MoveControl is the live gameplay source.  DisplayInfoData
        is a renderer/culling cache and may retain the last visible position or
