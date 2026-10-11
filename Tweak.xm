@@ -131,6 +131,7 @@ extern void espSetRuntimeEntityCount(int count);
 extern void espSetSourceDiagnostics(int liveCount, int displayCount, int staleCount,
                                     int screenCount, int buffCount, uint64_t sample);
 extern void espSetUnityViewport(float width, float height);
+extern void espSetMinimapPoint(float x, float y, float z);
 extern void espSetPaused(bool paused);
 extern void installMapHack(void);
 extern bool g_mapHackInstalled;
@@ -621,6 +622,57 @@ static int readBoxedIntResult(const Il2CppMethodInfo *method, Il2CppObject *obje
  * actor-probe state block below. */
 static Il2CppObject *g_proxyProbeActorManager = NULL;
 static void *g_proxyProbeActorManagerClass = NULL;
+/* Native minimap adapter.  The dump exposes CBattleSystem.TheMinimapSys and
+ * MinimapSys.GetPositionInScreen(Vector3, enMiniMapType); keep this separate
+ * from the camera projection used by the ESP overlay. */
+static Il2CppObject *g_nativeMinimapSystem = NULL;
+static const Il2CppMethodInfo *g_nativeMinimapProjectMethod = NULL;
+static BOOL g_nativeMinimapResolved = NO;
+
+static BOOL projectNativeMinimapPosition(Il2CppVector3 world, Il2CppVector3 *outScreen) {
+    if (!outScreen || !initIl2CppAPI() || !p_il2cpp_class_from_name ||
+        !p_il2cpp_class_get_field_from_name || !p_il2cpp_field_static_get_value ||
+        !p_il2cpp_object_get_class || !p_il2cpp_runtime_invoke) return NO;
+    if (!g_nativeMinimapResolved) {
+        g_nativeMinimapResolved = YES;
+        void *core = findIl2CppImageNamed("Scripts.GameCore.dll");
+        void *battle = core ? p_il2cpp_class_from_name(core, "Assets.Scripts.GameSystem", "CBattleSystem") : NULL;
+        void *field = battle ? p_il2cpp_class_get_field_from_name(battle, "_instance") : NULL;
+        if (field) p_il2cpp_field_static_get_value(field, &g_nativeMinimapSystem);
+        if (!g_nativeMinimapSystem && battle) {
+            const Il2CppMethodInfo *getInstance = resolveMethod(battle, "GetInstance", 0);
+            if (getInstance) {
+                Il2CppException *e = NULL;
+                g_nativeMinimapSystem = invokeMethod(getInstance, NULL, NULL, &e);
+                if (e) g_nativeMinimapSystem = NULL;
+            }
+        }
+        void *systemClass = g_nativeMinimapSystem ? p_il2cpp_object_get_class(g_nativeMinimapSystem) : NULL;
+        const Il2CppMethodInfo *getMap = systemClass ? resolveMethod(systemClass, "get_TheMinimapSys", 0) : NULL;
+        if (getMap) {
+            Il2CppException *e = NULL;
+            g_nativeMinimapSystem = invokeMethod(getMap, g_nativeMinimapSystem, NULL, &e);
+            if (e) g_nativeMinimapSystem = NULL;
+        }
+        void *mapClass = g_nativeMinimapSystem ? p_il2cpp_object_get_class(g_nativeMinimapSystem) : NULL;
+        g_nativeMinimapProjectMethod = mapClass ? resolveMethod(mapClass, "GetPositionInScreen", 2) : NULL;
+        runtimeLog([NSString stringWithFormat:
+            @"native minimap resolve battle=%d map=%d project=%d",
+            battle != NULL, g_nativeMinimapSystem != NULL,
+            g_nativeMinimapProjectMethod != NULL]);
+    }
+    if (!g_nativeMinimapSystem || !g_nativeMinimapProjectMethod) return NO;
+    /* enMiniMapType.Small is the first enum value in the dump's API contract. */
+    void *params[2] = { &world, &(int32_t){0} };
+    Il2CppException *exception = NULL;
+    Il2CppObject *boxed = invokeMethod(g_nativeMinimapProjectMethod,
+                                       g_nativeMinimapSystem, params, &exception);
+    void *raw = boxed && !exception && p_il2cpp_object_unbox
+        ? p_il2cpp_object_unbox(boxed) : NULL;
+    if (!raw) return NO;
+    *outScreen = *(Il2CppVector3 *)raw;
+    return isfinite(outScreen->x) && isfinite(outScreen->y) && isfinite(outScreen->z);
+}
 
 il2cpp_domain_get_t p_il2cpp_domain_get = NULL;
 il2cpp_domain_get_assemblies_t p_il2cpp_domain_get_assemblies = NULL;
@@ -1498,7 +1550,10 @@ static BOOL g_logicCallbackFailureLogged = NO;
 /* The reference overlay uses this compiled callback path as its primary
  * off-screen position source.  Keep it enabled so the injected overlay
  * follows the same verified request/response flow. */
-static BOOL g_logicCallbackLiveEnabled = YES;
+/* Disabled pending a device-side proof of the callback ABI.  runtime-50
+ * stopped during the first in-match refresh before any callback binding or
+ * request was logged, so do not enter this experimental bridge in gameplay. */
+static BOOL g_logicCallbackLiveEnabled = NO;
 
 static BOOL initializeActorLogicCallback(void) {
     if (g_logicCallbackInitialized) return g_logicCallbackDelegate != NULL;
@@ -2883,6 +2938,9 @@ static BOOL appendActorPositionSnapshot(const ActorPositionRef50 *ref,
     espAppendEntitySnapshot(world.x, world.y, world.z,
                             screen.x, screen.y, screen.z,
                             ref->displayName, ref->namespaceName);
+    Il2CppVector3 minimap = {-1, -1, -1};
+    if (projectNativeMinimapPosition(world, &minimap))
+        espSetMinimapPoint(minimap.x, minimap.y, minimap.z);
     return YES;
 }
 

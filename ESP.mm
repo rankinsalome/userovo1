@@ -43,6 +43,7 @@ static EspSourceDiagnostics g_sourceDiagnostics = {0, 0, 0, 0, 0, 0};
 typedef struct {
     Vec3 pos;
     Vec3 screen;
+    Vec3 minimap;
     float hp, maxHp;
     int team;
     bool ok;
@@ -59,6 +60,9 @@ static os_unfair_lock g_entLock = OS_UNFAIR_LOCK_INIT;
 static float g_unityViewportWidth = 0.0f;
 static float g_unityViewportHeight = 0.0f;
 static os_unfair_lock g_viewportLock = OS_UNFAIR_LOCK_INIT;
+static bool g_minimapEnabled = true;
+static float g_minimapX = 0.0f, g_minimapY = 0.0f;
+static float g_minimapW = 220.0f, g_minimapH = 220.0f;
 
 extern uintptr_t unityBase;
 extern bool g_mapHackEnabled;
@@ -71,6 +75,18 @@ void espSetUnityViewport(float width, float height) {
     g_unityViewportWidth = width;
     g_unityViewportHeight = height;
     os_unfair_lock_unlock(&g_viewportLock);
+}
+
+void espSetMinimapPoint(float x, float y, float z) {
+    if (!isfinite(x) || !isfinite(y) || !isfinite(z)) return;
+    if (g_pendingEntCnt <= 0) return;
+    g_pendingEnts[g_pendingEntCnt - 1].minimap = Vec3{x, y, z};
+}
+
+void espSetMinimapRect(float x, float y, float width, float height) {
+    if (!isfinite(x) || !isfinite(y) || !isfinite(width) || !isfinite(height) ||
+        width <= 10.0f || height <= 10.0f) return;
+    g_minimapX = x; g_minimapY = y; g_minimapW = width; g_minimapH = height;
 }
 
 void espSetRuntimeDiagnostics(int actorCount, int playerCount, bool cameraValid) {
@@ -182,6 +198,7 @@ void espAppendEntitySnapshot(float x, float y, float z,
     EEnt *e = &g_pendingEnts[g_pendingEntCnt++];
     e->pos = Vec3{x, y, z};
     e->screen = Vec3{sx, sy, sz};
+    e->minimap = Vec3{NAN, NAN, NAN};
     /* Negative/out-of-viewport coordinates are valid WorldToScreenPoint
        results for off-screen actors.  Keep them for edge rendering. */
     e->screenValid = isfinite(sx) && isfinite(sy) && isfinite(sz);
@@ -375,6 +392,19 @@ static EspView *g_espView = nil;
     if (localCount > kMaxESPEntries) localCount = kMaxESPEntries;
     memcpy(local, g_ents, sizeof(EEnt) * localCount);
     os_unfair_lock_unlock(&g_entLock);
+    /* Native minimap coordinates are already in screen space. Draw a small
+       independent marker layer so the world ESP projection remains unchanged. */
+    if (g_minimapEnabled) {
+        for (int i = 0; i < localCount; i++) {
+            EEnt *e = &local[i];
+            if (!isfinite(e->minimap.x) || !isfinite(e->minimap.y)) continue;
+            CGFloat mx = e->minimap.x, my = e->minimap.y;
+            CGFloat radius = 4.0f;
+            if (mx < 0 || my < 0 || mx > sw || my > sh) continue;
+            CGContextSetFillColorWithColor(c, [UIColor colorWithRed:1 green:.18 blue:.15 alpha:.95].CGColor);
+            CGContextFillEllipseInRect(c, CGRectMake(mx - radius, my - radius, radius * 2, radius * 2));
+        }
+    }
     float unityWidth = 0.0f;
     float unityHeight = 0.0f;
     os_unfair_lock_lock(&g_viewportLock);
