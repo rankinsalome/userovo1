@@ -108,6 +108,7 @@ uintptr_t unityBase = 0;
 /* ── State ── */
 static bool g_fogDisabled = false;
 bool g_mapHackEnabled = false;
+static const BOOL kRuntimeObserverOnly = YES;
 bool g_mapHackInstalled = false;
 static bool g_cameraProbeValid = false;
 static BOOL g_partitionedFogProbeDone = NO;
@@ -4289,14 +4290,13 @@ static void installRuntimeLifecycleObservers(void) {
         g_runtimePaused = true;
         g_entitySamplingActive = false;
         g_entityPositionSampling = false;
-        espSetPaused(true);
-        espClearEntitySnapshot();
+        if (!kRuntimeObserverOnly) { espSetPaused(true); espClearEntitySnapshot(); }
         runtimeLog(@"runtime paused reason=did-enter-background");
     }];
     [nc addObserverForName:UIApplicationWillEnterForegroundNotification object:nil queue:[NSOperationQueue mainQueue]
                     usingBlock:^(__unused NSNotification *note) {
         g_runtimePaused = false;
-        espSetPaused(false);
+        if (!kRuntimeObserverOnly) espSetPaused(false);
         runtimeLog(@"runtime resumed reason=will-enter-foreground");
         scheduleEntityManagerSampling();
     }];
@@ -4317,8 +4317,12 @@ static void installRuntimeLifecycleObservers(void) {
         installRuntimeLifecycleObservers();
         logCompactRuntimeBootstrap();
         probeMainCameraGetter();
-        scheduleEntityManagerSampling();
-        // Hooks installed on-demand by button press (not at startup)
-        showHUD();
+        if (kRuntimeObserverOnly) {
+            runtimeLog(@"[OBS][MODE] observer-only=1 writes=0 esp=0 fog=0 callback=0");
+            scheduleEntityManagerSampling();
+        } else {
+            scheduleEntityManagerSampling();
+            showHUD();
+        }
     });
 }
