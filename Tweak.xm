@@ -2735,7 +2735,9 @@ static void probePlayerCaptainChain(Il2CppObject *center, void *centerClass) {
             readObjectClassName((Il2CppObject *)captainObj, captainClass, sizeof(captainClass),
                                 captainNs, sizeof(captainNs));
             readUInt32Field((Il2CppObject *)captainObj, 0x4AC, &captainObjID);
-            readProcessBytes(captainObj + 0x460, logicRaw, sizeof(logicRaw));
+            /* captainLogicPos is a Player field (Player+0x460), NOT ActorLinker+0x460.
+             * Reading captainObj+0x460 returned ActorLinker selfPtr garbage (e.g. 13=0xD). */
+            readProcessBytes((uintptr_t)player + 0x460, logicRaw, sizeof(logicRaw));
             readProcessBytes(captainObj + 0x420, &moveControl, sizeof(moveControl));
             if (moveControl && isPlausibleObjectPointer(moveControl)) withMove++;
             fieldOK = readVector3Field((Il2CppObject *)captainObj, 0x4C4, &field);
