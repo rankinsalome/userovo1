@@ -9,23 +9,15 @@
 static os_log_t gLog;
 static dispatch_queue_t gQueue;
 static volatile uint64_t gUpdateHits;
-static volatile uint64_t gRemoteHits;
-static volatile uint64_t gCurHits;
 static volatile int gInstalled;
+static BOOL gHookAttempted;
+static uintptr_t gLoggedBase;
+static uintptr_t gLoggedMismatchBase;
+static BOOL gLoggedNoModule;
 
-typedef struct {
-    float x;
-    float y;
-    float z;
-} Vec3;
-
-typedef void (*UpdatePositionFn)(void *, void *);
-typedef void (*SetRemotePositionFn)(void *, Vec3);
-typedef Vec3 (*GetCurrentPositionFn)(void *);
+typedef uintptr_t (*UpdatePositionFn)(void *, void *, void *);
 extern "C" void MSHookFunction(void *symbol, void *replace, void **result);
 static UpdatePositionFn gOrigUpdate;
-static SetRemotePositionFn gOrigRemote;
-static GetCurrentPositionFn gOrigCurrent;
 
 static void logMessage(NSString *message) {
     if (!gLog) gLog = os_log_create("userovo1", "passive");
@@ -46,68 +38,71 @@ static uintptr_t moduleBase(const char *name) {
 }
 
 static void reportCounters(void) {
-    logMessage([NSString stringWithFormat:
-        @"[passive] hits update=%llu remote=%llu current=%llu",
-        gUpdateHits, gRemoteHits, gCurHits]);
+    logMessage([NSString stringWithFormat:@"[passive] hits update=%llu",
+        gUpdateHits]);
 }
 
-static BOOL installReadOnlyHook(uintptr_t target, void *replacement,
-                                void **original, const char *name) {
-    if (!target) {
-        logMessage([NSString stringWithFormat:
-            @"[passive] skip name=%s target=%p reason=invalid",
-            name, (void *)target]);
+static uintptr_t hookedUpdate(void *self, void *position, void *methodInfo);
+
+static BOOL updateTargetMatches(uintptr_t base, uintptr_t target) {
+    static const uint8_t expected[] = {
+        0xEB, 0x2B, 0xB8, 0x6D, 0xE9, 0x23, 0x01, 0x6D,
+        0xFC, 0x6F, 0x02, 0xA9, 0xFA, 0x67, 0x03, 0xA9
+    };
+    Dl_info info = {0};
+    if (!target || dladdr((const void *)target, &info) == 0 ||
+        (uintptr_t)info.dli_fbase != base) {
         return NO;
     }
-    MSHookFunction((void *)target, replacement, original);
+    return memcmp((const void *)target, expected, sizeof(expected)) == 0;
+}
+
+static BOOL installUpdateHook(uintptr_t target) {
+    uintptr_t base = moduleBase("UnityFramework");
+    if (!updateTargetMatches(base, target)) {
+        if (gLoggedMismatchBase != base) {
+            logMessage(@"[passive] skip UpdatePosition: image/prologue mismatch");
+            gLoggedMismatchBase = base;
+        }
+        return NO;
+    }
+    gHookAttempted = YES;
+    MSHookFunction((void *)target, (void *)&hookedUpdate,
+                   (void **)&gOrigUpdate);
+    if (!gOrigUpdate) {
+        logMessage(@"[passive] UpdatePosition hook missing original trampoline");
+        return NO;
+    }
     logMessage([NSString stringWithFormat:
-        @"[passive] hooked name=%s target=%p", name, (void *)target]);
+        @"[passive] hooked name=ActorLinker.UpdatePosition target=%p",
+        (void *)target]);
     return YES;
 }
 
-static void hookedUpdate(void *self, void *position) {
+static uintptr_t hookedUpdate(void *self, void *position, void *methodInfo) {
     gUpdateHits++;
-    if (gOrigUpdate) gOrigUpdate(self, position);
-}
-
-static void hookedRemote(void *self, Vec3 position) {
-    gRemoteHits++;
-    if (gOrigRemote) gOrigRemote(self, position);
-}
-
-static Vec3 hookedCurrent(void *self) {
-    gCurHits++;
-    if (gOrigCurrent) return gOrigCurrent(self);
-    return (Vec3){0.0f, 0.0f, 0.0f};
+    return gOrigUpdate ? gOrigUpdate(self, position, methodInfo) : 0;
 }
 
 static void installPassiveHooks(void) {
-    if (gInstalled) return;
+    if (gInstalled || gHookAttempted) return;
     uintptr_t base = moduleBase("UnityFramework");
     if (!base) {
-        logMessage(@"[passive] UnityFramework not loaded");
+        if (!gLoggedNoModule) {
+            logMessage(@"[passive] UnityFramework not loaded");
+            gLoggedNoModule = YES;
+        }
         return;
     }
 
     const uintptr_t rvaUpdate = 0x2F96F2C;
-    const uintptr_t rvaRemote = 0x2EBC998;
-    const uintptr_t rvaCurrent = 0x2EBC9BC;
-
-    logMessage([NSString stringWithFormat:
-        @"[passive] UnityFramework base=%p", (void *)base]);
-    BOOL a = installReadOnlyHook(base + rvaUpdate,
-        (void *)&hookedUpdate, (void **)&gOrigUpdate,
-        "ActorLinker.UpdatePosition");
-    BOOL b = installReadOnlyHook(base + rvaRemote,
-        (void *)&hookedRemote, (void **)&gOrigRemote,
-        "MoveComponent.set_RemotePosition");
-    BOOL c = installReadOnlyHook(base + rvaCurrent,
-        (void *)&hookedCurrent, (void **)&gOrigCurrent,
-        "MoveComponent.get_CurPosition");
-    gInstalled = (a || b || c) ? 1 : 0;
-    logMessage([NSString stringWithFormat:
-        @"[passive] install_result update=%d remote=%d current=%d",
-        a, b, c]);
+    if (gLoggedBase != base) {
+        logMessage([NSString stringWithFormat:
+            @"[passive] UnityFramework base=%p", (void *)base]);
+        gLoggedBase = base;
+    }
+    BOOL a = installUpdateHook(base + rvaUpdate);
+    gInstalled = a ? 1 : 0;
 }
 
 __attribute__((constructor))
