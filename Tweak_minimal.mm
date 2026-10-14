@@ -13,13 +13,19 @@ static volatile uint64_t gRemoteHits;
 static volatile uint64_t gCurHits;
 static volatile int gInstalled;
 
-extern "C" void MSHookFunction(void *symbol, void *replace, void **result)
-    __attribute__((weak_import));
+typedef struct {
+    float x;
+    float y;
+    float z;
+} Vec3;
 
-typedef void (*VoidMethod)(void *, void *);
-static VoidMethod gOrigUpdate;
-static VoidMethod gOrigRemote;
-static VoidMethod gOrigCurrent;
+typedef void (*UpdatePositionFn)(void *, void *);
+typedef void (*SetRemotePositionFn)(void *, Vec3);
+typedef Vec3 (*GetCurrentPositionFn)(void *);
+extern "C" void MSHookFunction(void *symbol, void *replace, void **result);
+static UpdatePositionFn gOrigUpdate;
+static SetRemotePositionFn gOrigRemote;
+static GetCurrentPositionFn gOrigCurrent;
 
 static void logMessage(NSString *message) {
     if (!gLog) gLog = os_log_create("userovo1", "passive");
@@ -47,10 +53,6 @@ static void reportCounters(void) {
 
 static BOOL installReadOnlyHook(uintptr_t target, void *replacement,
                                 void **original, const char *name) {
-    if (!MSHookFunction) {
-        logMessage(@"[passive] substrate_backend_missing");
-        return NO;
-    }
     if (!target) {
         logMessage([NSString stringWithFormat:
             @"[passive] skip name=%s target=%p reason=invalid",
@@ -68,14 +70,15 @@ static void hookedUpdate(void *self, void *position) {
     if (gOrigUpdate) gOrigUpdate(self, position);
 }
 
-static void hookedRemote(void *self, void *position) {
+static void hookedRemote(void *self, Vec3 position) {
     gRemoteHits++;
     if (gOrigRemote) gOrigRemote(self, position);
 }
 
-static void hookedCurrent(void *self, void *position) {
+static Vec3 hookedCurrent(void *self) {
     gCurHits++;
-    if (gOrigCurrent) gOrigCurrent(self, position);
+    if (gOrigCurrent) return gOrigCurrent(self);
+    return (Vec3){0.0f, 0.0f, 0.0f};
 }
 
 static void installPassiveHooks(void) {

@@ -8,6 +8,7 @@ TWEAK_NAME = gamehack
 gamehack_FILES = Tweak_minimal.mm
 gamehack_CFLAGS = -fobjc-arc -std=c++17 -Wno-error -Wno-unused-function
 gamehack_FRAMEWORKS = Foundation
+gamehack_LIBRARIES = substrate
 gamehack_LOGOS_DEFAULT_GENERATOR = internal
 
 include $(THEOS)/makefiles/tweak.mk
