@@ -1,11 +1,9 @@
-Package: com.yourname.gamehack
-Name: GameHack Pro
-Version: 2.0.0
+Package: com.userovo1.passive
+Name: userovo1 Passive Observer
+Version: 0.1.0
 Architecture: iphoneos-arm
-Description: War fog bypass / map hack / camera control for Honor of Kings
-Maintainer: you
-Author: you
+Description: Read-only passive runtime observer
+Maintainer: userovo
+Author: userovo
 Section: Tweaks
 Depends: mobilesubstrate
-
-#miaoo
